@@ -1,6 +1,6 @@
 import { NodeApiError } from 'n8n-workflow';
 
-import { wordpressApiRequest, wordpressApiRequestAllItems } from '../GenericFunctions';
+import { wordpressApiRequest, wordpressApiRequestAllItems } from '../v1/GenericFunctions';
 
 describe('Wordpress > GenericFunctions', () => {
 	const mockFunctions: any = {

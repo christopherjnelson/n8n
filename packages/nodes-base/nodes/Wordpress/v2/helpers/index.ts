@@ -2,3 +2,12 @@ export { getPostTypes, parsePostType, parsePostTypeCollection, resolvePostType }
 export type { WordpressPostType } from './postTypes';
 export { buildRestPath, validateRegisteredSlug } from './routes';
 export type { WordpressRestRoute } from './routes';
+export { getContentSchema, parseContentSchema } from './schemas';
+export type {
+	WordpressContentProperty,
+	WordpressContentSchema,
+	WordpressMetadataProperty,
+	WordpressSchemaValueType,
+} from './schemas';
+export { getTaxonomies, parseTaxonomyCollection } from './taxonomies';
+export type { WordpressTaxonomy } from './taxonomies';

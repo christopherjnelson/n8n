@@ -1,12 +1,13 @@
 import type { IDataObject, IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
 import type { Mock } from 'vitest';
 
-import * as GenericFunctions from '../GenericFunctions';
-import type * as GenericFunctionsType from '../GenericFunctions';
+import * as GenericFunctions from '../v1/GenericFunctions';
+import type * as GenericFunctionsType from '../v1/GenericFunctions';
+import { WordpressV1 } from '../v1/WordpressV1.node';
 import { Wordpress } from '../Wordpress.node';
 
-vi.mock('../GenericFunctions', async () => ({
-	...(await vi.importActual<typeof GenericFunctionsType>('../GenericFunctions')),
+vi.mock('../v1/GenericFunctions', async () => ({
+	...(await vi.importActual<typeof GenericFunctionsType>('../v1/GenericFunctions')),
 	wordpressApiRequest: vi.fn(),
 	wordpressApiRequestAllItems: vi.fn(),
 }));
@@ -54,8 +55,27 @@ describe('Wordpress node v1', () => {
 		wordpressApiRequestMock.mockReset();
 	});
 
+	it('registers and resolves version 1', () => {
+		const wordpress = new Wordpress();
+
+		expect(Object.keys(wordpress.nodeVersions)).toEqual(['1']);
+		expect(wordpress.description).toMatchObject({
+			displayName: 'Wordpress',
+			name: 'wordpress',
+			icon: 'file:wordpress.svg',
+			group: ['output'],
+			defaultVersion: 1,
+			subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
+			description: 'Consume Wordpress API',
+			usableAsTool: true,
+		});
+		expect(wordpress.nodeVersions[1]).toBeInstanceOf(WordpressV1);
+		expect(wordpress.getNodeType()).toBe(wordpress.nodeVersions[1]);
+		expect(wordpress.getNodeType(1)).toBe(wordpress.nodeVersions[1]);
+	});
+
 	it('keeps the stored workflow description contract', () => {
-		const { description } = new Wordpress();
+		const { description } = new Wordpress().getNodeType(1);
 
 		expect(description).toMatchObject({
 			name: 'wordpress',
@@ -124,7 +144,8 @@ describe('Wordpress node v1', () => {
 		wordpressApiRequestMock.mockResolvedValue({ deleted: true });
 		const executeFunctions = createExecuteFunctions(resource, 'delete', [parameters]);
 
-		const result = await new Wordpress().execute.call(executeFunctions);
+		const wordpressV1 = new Wordpress().getNodeType(1);
+		const result = await wordpressV1.execute!.call(executeFunctions);
 
 		expect(wordpressApiRequestMock).toHaveBeenCalledWith('DELETE', path, {}, query);
 		expect(result).toEqual([[{ json: { deleted: true }, pairedItem: { item: 0 } }]]);
@@ -144,7 +165,8 @@ describe('Wordpress node v1', () => {
 			true,
 		);
 
-		const result = await new Wordpress().execute.call(executeFunctions);
+		const wordpressV1 = new Wordpress().getNodeType(1);
+		const result = await wordpressV1.execute!.call(executeFunctions);
 
 		expect(wordpressApiRequestMock).toHaveBeenNthCalledWith(1, 'GET', '/posts/21', {}, {});
 		expect(wordpressApiRequestMock).toHaveBeenNthCalledWith(2, 'GET', '/posts/22', {}, {});
@@ -162,7 +184,8 @@ describe('Wordpress node v1', () => {
 			},
 		]);
 
-		await new Wordpress().execute.call(executeFunctions);
+		const wordpressV1 = new Wordpress().getNodeType(1);
+		await wordpressV1.execute!.call(executeFunctions);
 
 		expect(wordpressApiRequestMock).toHaveBeenCalledWith('POST', '/posts/23', {
 			id: 23,

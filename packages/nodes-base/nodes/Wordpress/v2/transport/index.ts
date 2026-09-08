@@ -13,6 +13,11 @@ import { buildRestPath } from '../helpers/routes';
 
 type WordpressFunctions = IExecuteFunctions | ILoadOptionsFunctions;
 
+export type WordpressFullResponse = {
+	body: unknown;
+	headers: unknown;
+};
+
 function normalizeWordpressSite(
 	node: ReturnType<WordpressFunctions['getNode']>,
 	value: unknown,
@@ -74,12 +79,13 @@ function normalizeSelfHostedUrl(
 	}
 }
 
-export async function wordpressApiRequest(
+async function request(
 	this: WordpressFunctions,
 	method: IHttpRequestMethods,
 	route: WordpressRestRoute,
 	body?: IDataObject,
 	qs: IDataObject = {},
+	resolveWithFullResponse = false,
 ): Promise<unknown> {
 	const node = this.getNode();
 	const path = buildRestPath(node, route);
@@ -129,6 +135,7 @@ export async function wordpressApiRequest(
 		uri,
 		json: true,
 		useQuerystring: true,
+		...(resolveWithFullResponse ? { resolveWithFullResponse: true } : {}),
 		...(body && Object.keys(body).length > 0 ? { body } : {}),
 		...(rejectUnauthorized !== undefined ? { rejectUnauthorized } : {}),
 	};
@@ -138,4 +145,34 @@ export async function wordpressApiRequest(
 	} catch (error) {
 		throw new NodeApiError(node, error as JsonObject);
 	}
+}
+
+export async function wordpressApiRequest(
+	this: WordpressFunctions,
+	method: IHttpRequestMethods,
+	route: WordpressRestRoute,
+	body?: IDataObject,
+	qs: IDataObject = {},
+): Promise<unknown> {
+	return await request.call(this, method, route, body, qs);
+}
+
+function isFullResponse(value: unknown): value is WordpressFullResponse {
+	return typeof value === 'object' && value !== null && 'body' in value && 'headers' in value;
+}
+
+export async function wordpressApiRequestWithResponse(
+	this: WordpressFunctions,
+	method: IHttpRequestMethods,
+	route: WordpressRestRoute,
+	qs: IDataObject = {},
+): Promise<WordpressFullResponse> {
+	const response = await request.call(this, method, route, undefined, qs, true);
+	if (!isFullResponse(response)) {
+		throw new NodeOperationError(
+			this.getNode(),
+			'WordPress returned an invalid response. Check the WordPress REST API configuration and try again.',
+		);
+	}
+	return response;
 }

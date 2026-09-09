@@ -25,7 +25,12 @@ const property = (
 const schema = (
 	properties: WordpressContentProperty[],
 	metadata: WordpressContentProperty[] = [],
-): WordpressContentSchema => ({ canCreate: true, canRead: true, properties, metadata });
+): WordpressContentSchema => ({
+	canCreate: true,
+	canRead: true,
+	writableProperties: properties,
+	writableMetadata: metadata,
+});
 
 describe('WordPress v2 request body', () => {
 	it('preserves all supported core value types', () => {

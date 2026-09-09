@@ -123,13 +123,13 @@ export function buildWordpressRequestBody(
 		throw requestBodyError(node, 'metadata must be an object');
 	}
 
-	const metaProperty = schema.properties.find((property) => property.name === 'meta');
+	const metaProperty = schema.writableProperties.find((property) => property.name === 'meta');
 	const coreProperties = propertyMap(
 		node,
-		schema.properties.filter((property) => property.name !== 'meta'),
+		schema.writableProperties.filter((property) => property.name !== 'meta'),
 		'field',
 	);
-	const metadataProperties = propertyMap(node, schema.metadata, 'metadata field');
+	const metadataProperties = propertyMap(node, schema.writableMetadata, 'metadata field');
 	const metadata = values.metadata;
 	const hasMetadata = metadata !== undefined && Object.keys(metadata).length > 0;
 

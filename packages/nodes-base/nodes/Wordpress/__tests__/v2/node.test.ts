@@ -9,6 +9,8 @@ import type { Mock } from 'vitest';
 
 import * as PostTypes from '../../v2/helpers/postTypes';
 import type * as PostTypesType from '../../v2/helpers/postTypes';
+import * as Schemas from '../../v2/helpers/schemas';
+import type * as SchemasType from '../../v2/helpers/schemas';
 import { searchPostTypes } from '../../v2/methods/listSearch';
 import * as Transport from '../../v2/transport';
 import type * as TransportType from '../../v2/transport';
@@ -20,6 +22,10 @@ vi.mock('../../v2/helpers/postTypes', async () => ({
 	getPostTypes: vi.fn(),
 	resolvePostType: vi.fn(),
 }));
+vi.mock('../../v2/helpers/schemas', async () => ({
+	...(await vi.importActual<typeof SchemasType>('../../v2/helpers/schemas')),
+	getContentSchema: vi.fn(),
+}));
 vi.mock('../../v2/transport', async () => ({
 	...(await vi.importActual<typeof TransportType>('../../v2/transport')),
 	wordpressApiRequest: vi.fn(),
@@ -30,6 +36,7 @@ const getPostTypesMock = PostTypes.getPostTypes as Mock;
 const resolvePostTypeMock = PostTypes.resolvePostType as Mock;
 const requestMock = Transport.wordpressApiRequest as Mock;
 const requestWithResponseMock = Transport.wordpressApiRequestWithResponse as Mock;
+const getContentSchemaMock = Schemas.getContentSchema as Mock;
 const node = { name: 'WordPress' } as INode;
 const discoveredType = {
 	slug: 'bs_workflow',
@@ -37,10 +44,55 @@ const discoveredType = {
 	restNamespace: 'publisher/v3',
 	restBase: 'library/items',
 };
+const writableSchema = {
+	canCreate: true,
+	canRead: true,
+	writableProperties: [
+		{ name: 'title', type: 'string', nullable: false, readOnly: false, required: true },
+		{ name: 'sticky', type: 'boolean', nullable: false, readOnly: false, required: false },
+		{ name: 'featured', type: 'boolean', nullable: false, readOnly: false, required: false },
+		{ name: 'score', type: 'number', nullable: true, readOnly: false, required: false },
+		{ name: 'items', type: 'array', nullable: false, readOnly: false, required: false },
+		{ name: 'config', type: 'object', nullable: false, readOnly: false, required: false },
+		{ name: 'summary', type: 'string', nullable: false, readOnly: false, required: false },
+		{ name: 'meta', type: 'object', nullable: false, readOnly: false, required: false },
+	],
+	writableMetadata: [
+		{ name: 'enabled', type: 'boolean', nullable: false, readOnly: false, required: false },
+		{ name: 'settings', type: 'object', nullable: false, readOnly: false, required: false },
+		{ name: 'unused', type: 'string', nullable: true, readOnly: false, required: false },
+	],
+};
 
 type Parameters = Record<string, unknown>;
 
-function createContext(parameters: Parameters[], continueOnFail = false): IExecuteFunctions {
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function mapperValue(
+	value: Record<string, unknown> | null,
+	removed: string[] = [],
+): Record<string, unknown> {
+	return {
+		mappingMode: 'defineBelow',
+		value,
+		schema:
+			value === null ? [] : Object.keys(value).map((id) => ({ id, removed: removed.includes(id) })),
+	};
+}
+
+function unsafeValue(): Record<string, unknown> {
+	const value: Record<string, unknown> = {};
+	Object.defineProperty(value, '__proto__', { value: 'unsafe', enumerable: true });
+	return value;
+}
+
+type TestContext = IExecuteFunctions & {
+	getNodeParameter: Mock<IExecuteFunctions['getNodeParameter']>;
+};
+
+function createContext(parameters: Parameters[], continueOnFail = false): TestContext {
 	return {
 		getInputData: vi.fn().mockReturnValue(parameters.map((json) => ({ json }))),
 		getNode: vi.fn().mockReturnValue(node),
@@ -53,7 +105,15 @@ function createContext(parameters: Parameters[], continueOnFail = false): IExecu
 					fallback?: unknown,
 					options?: { extractValue?: boolean },
 				) => {
-					const value = parameters[itemIndex]?.[name] ?? parameters[0]?.[name];
+					const readParameter = (values: Parameters | undefined): unknown =>
+						name.split('.').reduce<unknown>((current, part) => {
+							if (!isRecord(current)) {
+								return undefined;
+							}
+							return part in current ? current[part] : undefined;
+						}, values);
+					const itemValue = readParameter(parameters[itemIndex]);
+					const value = itemValue === undefined ? readParameter(parameters[0]) : itemValue;
 					if (
 						name === 'postType' &&
 						options?.extractValue &&
@@ -66,7 +126,7 @@ function createContext(parameters: Parameters[], continueOnFail = false): IExecu
 				},
 			),
 		continueOnFail: vi.fn().mockReturnValue(continueOnFail),
-	} as unknown as IExecuteFunctions;
+	} as unknown as TestContext;
 }
 
 function paginationHeaders(totalPages: string, capitalized = false): Record<string, string> {
@@ -87,17 +147,19 @@ describe('WordPress v2 node', () => {
 		resolvePostTypeMock.mockReset().mockResolvedValue(discoveredType);
 		requestMock.mockReset();
 		requestWithResponseMock.mockReset();
+		getContentSchemaMock.mockReset().mockResolvedValue(writableSchema);
 	});
 
-	it('keeps v1 as the default and registers v2', () => {
+	it('uses v2 by default and keeps v1 available for stored workflows', () => {
 		const wordpress = new Wordpress();
-		expect(wordpress.description.defaultVersion).toBe(1);
+		expect(wordpress.description.defaultVersion).toBe(2);
 		expect(wordpress.nodeVersions[1]).toBeDefined();
 		expect(wordpress.nodeVersions[2]).toBeInstanceOf(WordpressV2);
-		expect(wordpress.getNodeType()).toBe(wordpress.nodeVersions[1]);
+		expect(wordpress.getNodeType()).toBe(wordpress.nodeVersions[2]);
+		expect(wordpress.getNodeType(1)).toBe(wordpress.nodeVersions[1]);
 	});
 
-	it('shows authentication, resource, post type, and read-only operations in order', () => {
+	it('shows authentication, resource, post type, and operations in order', () => {
 		const description = new Wordpress().getNodeType(2).description;
 		expect(description.credentials).toEqual([
 			expect.objectContaining({ name: 'wordpressApi' }),
@@ -107,6 +169,12 @@ describe('WordPress v2 node', () => {
 		expect(names.slice(0, 4)).toEqual(['authType', 'resource', 'postType', 'operation']);
 		const operation = description.properties.find((property) => property.name === 'operation');
 		expect(operation?.options).toEqual([
+			{
+				name: 'Create',
+				value: 'create',
+				action: 'Create an item',
+				description: 'Create an item in the selected post type',
+			},
 			{
 				name: 'Get',
 				value: 'get',
@@ -118,6 +186,12 @@ describe('WordPress v2 node', () => {
 				value: 'getMany',
 				action: 'Get many items',
 				description: 'Get items from the selected post type',
+			},
+			{
+				name: 'Update',
+				value: 'update',
+				action: 'Update an item',
+				description: 'Update an item in the selected post type',
 			},
 		]);
 		const postType = description.properties.find((property) => property.name === 'postType');
@@ -135,7 +209,257 @@ describe('WordPress v2 node', () => {
 		expect(JSON.stringify(postType)).toContain('Enter a registered post type slug');
 		const returnAll = description.properties.find((property) => property.name === 'returnAll');
 		expect(returnAll?.displayName).toBe('Return All');
-		expect(description.properties.some((property) => property.name === 'metadata')).toBe(false);
+		expect(description.properties.some((property) => property.name === 'metadata')).toBe(true);
+		const createFields = description.properties.find(
+			(property) =>
+				property.name === 'fieldsToSend' &&
+				property.displayOptions?.show?.operation?.includes('create'),
+		);
+		const createMetadata = description.properties.find(
+			(property) =>
+				property.name === 'metadata' &&
+				property.displayOptions?.show?.operation?.includes('create'),
+		);
+		expect(createFields).toMatchObject({
+			required: true,
+			typeOptions: { resourceMapper: { supportAutoMap: false, allowEmptyValues: true } },
+		});
+		expect(createMetadata).toMatchObject({
+			required: false,
+			typeOptions: { resourceMapper: { supportAutoMap: false, allowEmptyValues: true } },
+		});
+	});
+
+	it('creates items on the discovered collection route and preserves typed values', async () => {
+		requestMock.mockResolvedValueOnce({ id: 11 }).mockResolvedValueOnce({ id: 12 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'create',
+				postType: 'bs_workflow',
+				fieldsToSend: mapperValue(
+					{
+						title: '',
+						sticky: false,
+						featured: false,
+						score: 0,
+						items: [],
+						config: {},
+						summary: '',
+					},
+					['featured'],
+				),
+				metadata: mapperValue({ enabled: false, settings: {}, unused: null }, ['unused']),
+			},
+			{
+				fieldsToSend: mapperValue({ title: 'Second' }),
+				metadata: mapperValue(null),
+			},
+		]);
+
+		const result = await executeV2(context);
+
+		expect(resolvePostTypeMock).toHaveBeenCalledTimes(1);
+		expect(getContentSchemaMock).toHaveBeenCalledTimes(1);
+		expect(requestMock).toHaveBeenNthCalledWith(
+			1,
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items' },
+			{
+				title: '',
+				sticky: false,
+				score: 0,
+				items: [],
+				config: {},
+				summary: '',
+				meta: { enabled: false, settings: {} },
+			},
+		);
+		expect(requestMock).toHaveBeenNthCalledWith(
+			2,
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items' },
+			{ title: 'Second' },
+		);
+		expect(result[0]).toEqual([
+			{ json: { id: 11 }, pairedItem: { item: 0 } },
+			{ json: { id: 12 }, pairedItem: { item: 1 } },
+		]);
+	});
+
+	it('preserves an explicit nullable field value', async () => {
+		requestMock.mockResolvedValue({ id: 13 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'create',
+				postType: 'bs_workflow',
+				fieldsToSend: mapperValue({ title: 'Nullable', score: null }),
+				metadata: mapperValue(null),
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items' },
+			{ title: 'Nullable', score: null },
+		);
+		const parameterNames = context.getNodeParameter.mock.calls.map(([name]) => name);
+		expect(parameterNames).toContain('fieldsToSend');
+		expect(parameterNames).toContain('fieldsToSend.value');
+		expect(parameterNames).toContain('metadata');
+		expect(parameterNames).not.toContain('metadata.value');
+	});
+
+	it('rejects malformed mapper values with the item index', async () => {
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'create',
+				postType: 'post',
+				fieldsToSend: { mappingMode: 'defineBelow', value: 'invalid', schema: [] },
+				metadata: mapperValue(null),
+			},
+		]);
+
+		await expect(executeV2(context)).rejects.toMatchObject({ context: { itemIndex: 0 } });
+		expect(requestMock).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{
+			name: 'duplicate schema entries',
+			mapper: {
+				mappingMode: 'defineBelow',
+				value: { title: 'Test' },
+				schema: [
+					{ id: 'title', removed: false },
+					{ id: 'title', removed: true },
+				],
+			},
+		},
+		{
+			name: 'an unsafe schema ID',
+			mapper: {
+				mappingMode: 'defineBelow',
+				value: {},
+				schema: [{ id: '__proto__', removed: false }],
+			},
+		},
+		{
+			name: 'an unknown active value',
+			mapper: { mappingMode: 'defineBelow', value: { title: 'Test' }, schema: [] },
+		},
+		{
+			name: 'automatic mapping',
+			mapper: {
+				mappingMode: 'autoMapInputData',
+				value: { title: 'Test' },
+				schema: [{ id: 'title', removed: false }],
+			},
+		},
+		{
+			name: 'an unsafe value key',
+			mapper: {
+				mappingMode: 'defineBelow',
+				value: unsafeValue(),
+				schema: [],
+			},
+		},
+	])('rejects $name in mapper data', async ({ mapper }) => {
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'create',
+				postType: 'post',
+				fieldsToSend: mapper,
+				metadata: mapperValue(null),
+			},
+		]);
+
+		await expect(executeV2(context)).rejects.toMatchObject({ context: { itemIndex: 0 } });
+		expect(requestMock).not.toHaveBeenCalled();
+	});
+
+	it('returns an item-paired error for an invalid API response', async () => {
+		requestMock.mockResolvedValue('invalid');
+		const context = createContext(
+			[
+				{
+					resource: 'post',
+					operation: 'update',
+					postType: 'post',
+					itemId: 5,
+					fieldsToSend: mapperValue({}),
+					metadata: mapperValue(null),
+				},
+			],
+			true,
+		);
+
+		const result = await executeV2(context);
+
+		expect(result[0]?.[0]?.json.error).toContain('invalid item');
+		expect(result[0]?.[0]?.pairedItem).toEqual({ item: 0 });
+	});
+
+	it('stops a write before item requests when the schema is not writable', async () => {
+		getContentSchemaMock.mockResolvedValue({
+			...writableSchema,
+			canCreate: false,
+		});
+		const context = createContext([{ resource: 'post', operation: 'create', postType: 'post' }]);
+
+		await expect(executeV2(context)).rejects.toThrow("doesn't have a writable REST schema");
+		expect(requestMock).not.toHaveBeenCalled();
+	});
+
+	it('updates one item without sending omitted fields or metadata', async () => {
+		requestMock.mockResolvedValue({ id: 21 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'update',
+				postType: 'bs_workflow',
+				itemId: 21,
+				fieldsToSend: mapperValue({ sticky: false }),
+				metadata: mapperValue({ enabled: false }),
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items', suffix: [21] },
+			{ sticky: false, meta: { enabled: false } },
+		);
+	});
+
+	it('continues after one invalid update ID', async () => {
+		requestMock.mockResolvedValue({ id: 22 });
+		const context = createContext(
+			[
+				{
+					resource: 'post',
+					operation: 'update',
+					postType: 'post',
+					itemId: 0,
+					fieldsToSend: mapperValue({}),
+					metadata: mapperValue({}),
+				},
+				{ itemId: 22, fieldsToSend: mapperValue({}), metadata: mapperValue({}) },
+			],
+			true,
+		);
+
+		const result = await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledTimes(1);
+		expect(result[0]?.[0]?.json.error).toContain('positive whole number');
+		expect(result[0]?.[1]).toEqual({ json: { id: 22 }, pairedItem: { item: 1 } });
 	});
 
 	it('lists friendly post type names and stores registered slugs', async () => {
@@ -188,6 +512,7 @@ describe('WordPress v2 node', () => {
 				{ json: { id: 12 }, pairedItem: { item: 1 } },
 			],
 		]);
+		expect(getContentSchemaMock).not.toHaveBeenCalled();
 	});
 
 	it('uses the discovered route for every Get Many page', async () => {
@@ -222,6 +547,7 @@ describe('WordPress v2 node', () => {
 			{ json: { id: 1 }, pairedItem: { item: 0 } },
 			{ json: { id: 2 }, pairedItem: { item: 0 } },
 		]);
+		expect(getContentSchemaMock).not.toHaveBeenCalled();
 	});
 
 	it('respects the Get Many limit without requesting another page', async () => {

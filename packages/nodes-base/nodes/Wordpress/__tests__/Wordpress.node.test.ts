@@ -65,14 +65,14 @@ describe('Wordpress node v1', () => {
 			name: 'wordpress',
 			icon: 'file:wordpress.svg',
 			group: ['output'],
-			defaultVersion: 1,
+			defaultVersion: 2,
 			subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
 			description: 'Consume Wordpress API',
 			usableAsTool: true,
 		});
 		expect(wordpress.nodeVersions[1]).toBeInstanceOf(WordpressV1);
 		expect(wordpress.nodeVersions[2]).toBeInstanceOf(WordpressV2);
-		expect(wordpress.getNodeType()).toBe(wordpress.nodeVersions[1]);
+		expect(wordpress.getNodeType()).toBe(wordpress.nodeVersions[2]);
 		expect(wordpress.getNodeType(1)).toBe(wordpress.nodeVersions[1]);
 	});
 

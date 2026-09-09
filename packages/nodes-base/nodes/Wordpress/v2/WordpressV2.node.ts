@@ -8,7 +8,7 @@ import type {
 
 import { router } from './actions/router';
 import { versionDescription } from './actions/versionDescription';
-import * as listSearch from './methods';
+import { listSearch, resourceMapping } from './methods';
 
 export class WordpressV2 implements INodeType {
 	description: INodeTypeDescription;
@@ -17,7 +17,7 @@ export class WordpressV2 implements INodeType {
 		this.description = { ...baseDescription, ...versionDescription };
 	}
 
-	methods = { listSearch };
+	methods = { listSearch, resourceMapping };
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		return await router.call(this);

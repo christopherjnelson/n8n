@@ -1,4 +1,4 @@
-import type { INode } from 'n8n-workflow';
+import type { IDataObject, INode } from 'n8n-workflow';
 import { isSafeObjectProperty, NodeOperationError, setSafeObjectProperty } from 'n8n-workflow';
 
 import type { WordpressContentProperty, WordpressContentSchema } from './schemas';
@@ -112,7 +112,7 @@ export function buildWordpressRequestBody(
 	schema: WordpressContentSchema,
 	mode: WordpressWriteMode,
 	values: WordpressRequestValues,
-): Record<string, unknown> {
+): IDataObject {
 	if (!isRecord(values)) {
 		throw requestBodyError(node, 'values must be an object');
 	}
@@ -153,11 +153,11 @@ export function buildWordpressRequestBody(
 		}
 	}
 
-	const body: Record<string, unknown> = {};
+	const body: IDataObject = {};
 	addSuppliedValues(node, body, values.fields, coreProperties, 'field');
 
 	if (hasMetadata) {
-		const metadataBody: Record<string, unknown> = {};
+		const metadataBody: IDataObject = {};
 		addSuppliedValues(node, metadataBody, metadata, metadataProperties, 'metadata field');
 		setSafeObjectProperty(body, 'meta', metadataBody);
 	}

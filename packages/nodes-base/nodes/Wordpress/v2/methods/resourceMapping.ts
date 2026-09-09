@@ -14,6 +14,19 @@ function mapType(type: WordpressContentProperty['type']): FieldType {
 	return type;
 }
 
+function getDisplayName(property: WordpressContentProperty, displayName: string): string {
+	if (property.type === 'array') {
+		return `${displayName} (JSON array${property.itemType ? ` of ${property.itemType} values` : ''})`;
+	}
+	if (property.type === 'object') return `${displayName} (JSON object)`;
+	return displayName;
+}
+
+function getOptionName(value: string | number | boolean): string {
+	const text = String(value);
+	return typeof value === 'string' ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
 function toMapperField(
 	property: WordpressContentProperty,
 	id: string,
@@ -21,16 +34,25 @@ function toMapperField(
 	required: boolean,
 	removed: boolean,
 ): ResourceMapperField {
+	const usesOptions =
+		property.enum !== undefined &&
+		['string', 'integer', 'number', 'boolean'].includes(property.type);
 	return {
 		id,
-		displayName,
+		displayName: getDisplayName(property, displayName),
 		required,
 		defaultMatch: false,
 		canBeUsedToMatch: false,
 		display: true,
 		removed,
-		type: mapType(property.type),
-		defaultValue: null,
+		type: usesOptions
+			? 'options'
+			: property.type === 'string' && property.format === 'date-time'
+				? 'dateTime'
+				: mapType(property.type),
+		...(usesOptions
+			? { options: property.enum?.map((value) => ({ name: getOptionName(value), value })) ?? [] }
+			: {}),
 	};
 }
 

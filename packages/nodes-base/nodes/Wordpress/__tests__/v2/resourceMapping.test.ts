@@ -124,7 +124,6 @@ describe('WordPress v2 resource mapping', () => {
 				type: 'string',
 				required: true,
 				removed: false,
-				defaultValue: null,
 			}),
 			expect.objectContaining({
 				id: 'content:count',
@@ -132,7 +131,6 @@ describe('WordPress v2 resource mapping', () => {
 				type: 'number',
 				required: false,
 				removed: false,
-				defaultValue: null,
 			}),
 			expect.objectContaining({
 				id: 'content:ratio',
@@ -140,7 +138,6 @@ describe('WordPress v2 resource mapping', () => {
 				type: 'number',
 				required: false,
 				removed: false,
-				defaultValue: null,
 			}),
 			expect.objectContaining({
 				id: 'content:enabled',
@@ -148,8 +145,18 @@ describe('WordPress v2 resource mapping', () => {
 				type: 'boolean',
 				removed: false,
 			}),
-			expect.objectContaining({ id: 'content:list', type: 'array', removed: false }),
-			expect.objectContaining({ id: 'content:config', type: 'object', removed: false }),
+			expect.objectContaining({
+				id: 'content:list',
+				displayName: 'list (JSON array)',
+				type: 'array',
+				removed: false,
+			}),
+			expect.objectContaining({
+				id: 'content:config',
+				displayName: 'config (JSON object)',
+				type: 'object',
+				removed: false,
+			}),
 			expect.objectContaining({
 				id: 'metadata:flag',
 				displayName: 'Metadata: flag',
@@ -168,7 +175,6 @@ describe('WordPress v2 resource mapping', () => {
 				type: 'number',
 				required: false,
 				removed: true,
-				defaultValue: null,
 			}),
 			expect.objectContaining({ id: 'metadata:ratio', type: 'number', removed: true }),
 			expect.objectContaining({ id: 'metadata:items', type: 'array', removed: true }),
@@ -180,6 +186,84 @@ describe('WordPress v2 resource mapping', () => {
 		const result = await getContentFields.call(context('update'));
 
 		expect(result.fields.every((field) => !field.required)).toBe(true);
+	});
+
+	it('uses schema details for labels and reliable controls', async () => {
+		getContentSchemaMock.mockResolvedValue({
+			canCreate: true,
+			canRead: true,
+			writableProperties: [
+				{
+					name: 'title',
+					type: 'string',
+					nullable: false,
+					readOnly: false,
+					required: true,
+					description: 'The title.',
+				},
+				{
+					name: 'tags',
+					type: 'array',
+					itemType: 'integer',
+					nullable: false,
+					readOnly: false,
+					required: false,
+				},
+				{
+					name: 'status',
+					type: 'string',
+					enum: ['draft', 'publish'],
+					nullable: false,
+					readOnly: false,
+					required: false,
+				},
+				{
+					name: 'published_at',
+					type: 'string',
+					format: 'date-time',
+					nullable: false,
+					readOnly: false,
+					required: false,
+				},
+				{
+					name: 'settings',
+					type: 'object',
+					properties: [
+						{ name: 'mode', type: 'string', required: true, readOnly: false },
+						{ name: 'rendered', type: 'string', required: false, readOnly: true },
+					],
+					nullable: false,
+					readOnly: false,
+					required: false,
+				},
+			],
+			writableMetadata: [],
+		});
+
+		const { fields } = await getContentFields.call(context('create'));
+		expect(fields).toMatchObject([
+			{ id: 'content:title', displayName: 'title', type: 'string' },
+			{
+				id: 'content:tags',
+				displayName: 'tags (JSON array of integer values)',
+				type: 'array',
+			},
+			{
+				id: 'content:status',
+				type: 'options',
+				options: [
+					{ name: 'Draft', value: 'draft' },
+					{ name: 'Publish', value: 'publish' },
+				],
+			},
+			{ id: 'content:published_at', type: 'dateTime' },
+			{
+				id: 'content:settings',
+				displayName: 'settings (JSON object)',
+				type: 'object',
+			},
+		]);
+		expect(fields.every((field) => field.defaultValue === undefined)).toBe(true);
 	});
 
 	it('requires metadata children on create only when the metadata container is required', async () => {

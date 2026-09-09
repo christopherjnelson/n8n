@@ -263,7 +263,7 @@ describe('WordPress v2 node', () => {
 		});
 	});
 
-	it('creates items on the discovered collection route and preserves typed values', async () => {
+	it('sends resolved Resource Mapper arrays and objects as native values', async () => {
 		requestMock.mockResolvedValueOnce({ id: 11 }).mockResolvedValueOnce({ id: 12 });
 		const context = createContext([
 			{

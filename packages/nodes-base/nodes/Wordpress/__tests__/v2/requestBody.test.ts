@@ -54,6 +54,27 @@ describe('WordPress v2 request body', () => {
 		expect(buildWordpressRequestBody(node, contentSchema, 'update', { fields })).toEqual(fields);
 	});
 
+	it('sends documented core content fields as plain strings', () => {
+		const fields = { title: 'Title', content: '<p>Body</p>', excerpt: 'Summary' };
+		const contentSchema = schema([
+			property('title', 'string'),
+			property('content', 'string'),
+			property('excerpt', 'string'),
+		]);
+
+		expect(buildWordpressRequestBody(node, contentSchema, 'create', { fields })).toEqual(fields);
+	});
+
+	it('keeps omitted, empty array, and empty object values distinct', () => {
+		const contentSchema = schema([property('tags', 'array'), property('settings', 'object')]);
+		expect(buildWordpressRequestBody(node, contentSchema, 'update', { fields: {} })).toEqual({});
+		expect(
+			buildWordpressRequestBody(node, contentSchema, 'update', {
+				fields: { tags: [], settings: {} },
+			}),
+		).toEqual({ tags: [], settings: {} });
+	});
+
 	it('preserves false, zero, an empty string, and an empty array', () => {
 		const fields = { enabled: false, count: 0, text: '', tags: [] };
 		const contentSchema = schema([

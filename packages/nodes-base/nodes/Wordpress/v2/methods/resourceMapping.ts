@@ -14,14 +14,6 @@ function mapType(type: WordpressContentProperty['type']): FieldType {
 	return type;
 }
 
-function getDisplayName(property: WordpressContentProperty, displayName: string): string {
-	if (property.type === 'array') {
-		return `${displayName} (JSON array${property.itemType ? ` of ${property.itemType} values` : ''})`;
-	}
-	if (property.type === 'object') return `${displayName} (JSON object)`;
-	return displayName;
-}
-
 function getOptionName(value: string | number | boolean): string {
 	const text = String(value);
 	return typeof value === 'string' ? text.charAt(0).toUpperCase() + text.slice(1) : text;
@@ -39,7 +31,7 @@ function toMapperField(
 		['string', 'integer', 'number', 'boolean'].includes(property.type);
 	return {
 		id,
-		displayName: getDisplayName(property, displayName),
+		displayName,
 		required,
 		defaultMatch: false,
 		canBeUsedToMatch: false,

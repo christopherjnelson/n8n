@@ -141,7 +141,9 @@ function createContext(parameters: Parameters[], continueOnFail = false): TestCo
 					) {
 						return 'value' in value ? value.value : fallback;
 					}
-					return value === undefined ? fallback : value;
+					if (value !== undefined) return value;
+					if (fallback !== undefined) return fallback;
+					throw new Error(`Could not get parameter "${name}"`);
 				},
 			),
 		continueOnFail: vi.fn().mockReturnValue(continueOnFail),
@@ -178,7 +180,7 @@ describe('WordPress v2 node', () => {
 		expect(wordpress.getNodeType(1)).toBe(wordpress.nodeVersions[1]);
 	});
 
-	it('shows authentication, resource, post type, and operations in order', () => {
+	it('shows v2 parameters and keeps write mapper state independent', () => {
 		const description = new Wordpress().getNodeType(2).description;
 		expect(description.subtitle).toBe('={{ $parameter["postType"].value }}');
 		expect(description.credentials).toEqual([
@@ -237,18 +239,17 @@ describe('WordPress v2 node', () => {
 		const returnAll = description.properties.find((property) => property.name === 'returnAll');
 		expect(returnAll?.displayName).toBe('Return All');
 		expect(description.properties.some((property) => property.name === 'metadata')).toBe(false);
-		const writeFields = description.properties.filter(
-			(property) => property.name === 'fieldsToSend',
+		const createFields = description.properties.find(
+			(property) => property.name === 'createFieldsToSend',
 		);
-		expect(writeFields).toHaveLength(2);
-		const createFields = writeFields.find((property) =>
-			property.displayOptions?.show?.operation?.includes('create'),
-		);
-		const updateFields = writeFields.find((property) =>
-			property.displayOptions?.show?.operation?.includes('update'),
+		const updateFields = description.properties.find(
+			(property) => property.name === 'updateFieldsToSend',
 		);
 		expect(createFields).toMatchObject({
 			required: true,
+			description:
+				'For taxonomy fields, enter a JSON array of term IDs, such as [12, 34]. Enter [] to remove all terms.',
+			displayOptions: { show: { resource: ['post'], operation: ['create'] } },
 			typeOptions: {
 				resourceMapper: {
 					supportAutoMap: false,
@@ -259,8 +260,12 @@ describe('WordPress v2 node', () => {
 		});
 		expect(updateFields).toMatchObject({
 			required: true,
+			description:
+				'For taxonomy fields, enter a JSON array of term IDs, such as [12, 34]. Enter [] to remove all terms.',
+			displayOptions: { show: { resource: ['post'], operation: ['update'] } },
 			typeOptions: { resourceMapper: { valuesLabel: 'Fields to update' } },
 		});
+		expect(createFields?.name).not.toBe(updateFields?.name);
 	});
 
 	it('sends resolved Resource Mapper arrays and objects as native values', async () => {
@@ -317,6 +322,170 @@ describe('WordPress v2 node', () => {
 			{ json: { id: 11 }, pairedItem: { item: 0 } },
 			{ json: { id: 12 }, pairedItem: { item: 1 } },
 		]);
+	});
+
+	it.each([
+		['create', 'createFieldsToSend'],
+		['update', 'updateFieldsToSend'],
+	] as const)(
+		'uses only the %s operation mapper when it is configured',
+		async (operation, name) => {
+			requestMock.mockResolvedValue({ id: 14 });
+			const context = createContext([
+				{
+					resource: 'post',
+					operation,
+					postType: 'bs_workflow',
+					...(operation === 'update' ? { itemId: 14 } : {}),
+					[name]: mapperValue({ title: operation }),
+				},
+			]);
+
+			await executeV2(context);
+
+			expect(requestMock).toHaveBeenCalledWith(
+				'POST',
+				{
+					namespace: 'publisher/v3',
+					base: 'library/items',
+					...(operation === 'update' ? { suffix: [14] } : {}),
+				},
+				{ title: operation },
+			);
+			expect(context.getNodeParameter).not.toHaveBeenCalledWith(
+				'fieldsToSend',
+				expect.anything(),
+				expect.anything(),
+			);
+		},
+	);
+
+	it.each(['create', 'update'] as const)(
+		'loads a stored legacy mapper for %s',
+		async (operation) => {
+			requestMock.mockResolvedValue({ id: 15 });
+			const context = createContext([
+				{
+					resource: 'post',
+					operation,
+					postType: 'bs_workflow',
+					...(operation === 'update' ? { itemId: 15 } : {}),
+					fieldsToSend: mapperValue({ title: 'Legacy' }),
+				},
+			]);
+
+			await executeV2(context);
+
+			expect(requestMock).toHaveBeenCalledWith(
+				'POST',
+				expect.objectContaining(operation === 'update' ? { suffix: [15] } : {}),
+				{ title: 'Legacy' },
+			);
+		},
+	);
+
+	it('uses legacy data when the create mapper has the exact untouched default', async () => {
+		requestMock.mockResolvedValue({ id: 16 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'create',
+				postType: 'bs_workflow',
+				createFieldsToSend: { mappingMode: 'defineBelow', value: null },
+				fieldsToSend: mapperValue({ title: 'Legacy' }),
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items' },
+			{ title: 'Legacy' },
+		);
+	});
+
+	it('uses configured new mapper data when legacy data is also present', async () => {
+		requestMock.mockResolvedValue({ id: 17 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'create',
+				postType: 'bs_workflow',
+				createFieldsToSend: mapperValue({ title: 'New' }),
+				fieldsToSend: mapperValue({ title: 'Legacy' }),
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items' },
+			{ title: 'New' },
+		);
+		expect(context.getNodeParameter).not.toHaveBeenCalledWith(
+			'fieldsToSend',
+			expect.anything(),
+			expect.anything(),
+		);
+	});
+
+	it('uses authored null mapper state instead of legacy data', async () => {
+		requestMock.mockResolvedValue({ id: 18 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'update',
+				postType: 'bs_workflow',
+				itemId: 18,
+				updateFieldsToSend: { mappingMode: 'defineBelow', value: null, schema: [] },
+				fieldsToSend: mapperValue({ title: 'Legacy' }),
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items', suffix: [18] },
+			{},
+		);
+		expect(context.getNodeParameter).not.toHaveBeenCalledWith(
+			'fieldsToSend',
+			expect.anything(),
+			expect.anything(),
+		);
+	});
+
+	it('uses an untouched mapper as an empty mapping when legacy data is absent', async () => {
+		requestMock.mockResolvedValue({ id: 19 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'update',
+				postType: 'bs_workflow',
+				itemId: 19,
+				updateFieldsToSend: { mappingMode: 'defineBelow', value: null },
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items', suffix: [19] },
+			{},
+		);
+	});
+
+	it('reports invalid mapping when no current or legacy mapper exists', async () => {
+		const context = createContext([
+			{ resource: 'post', operation: 'create', postType: 'bs_workflow' },
+		]);
+
+		await expect(executeV2(context)).rejects.toThrow('The field mapping is invalid');
+		expect(requestMock).not.toHaveBeenCalled();
 	});
 
 	it('preserves an explicit nullable field value', async () => {
@@ -463,7 +632,7 @@ describe('WordPress v2 node', () => {
 				operation: 'update',
 				postType: 'bs_workflow',
 				itemId: 21,
-				fieldsToSend: mapperValue({ sticky: false }, { enabled: false }),
+				updateFieldsToSend: mapperValue({ sticky: false }, { enabled: false }),
 			},
 		]);
 

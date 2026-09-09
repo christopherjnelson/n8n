@@ -147,13 +147,13 @@ describe('WordPress v2 resource mapping', () => {
 			}),
 			expect.objectContaining({
 				id: 'content:list',
-				displayName: 'list (JSON array)',
+				displayName: 'list',
 				type: 'array',
 				removed: false,
 			}),
 			expect.objectContaining({
 				id: 'content:config',
-				displayName: 'config (JSON object)',
+				displayName: 'config',
 				type: 'object',
 				removed: false,
 			}),
@@ -188,7 +188,7 @@ describe('WordPress v2 resource mapping', () => {
 		expect(result.fields.every((field) => !field.required)).toBe(true);
 	});
 
-	it('uses schema details for labels and reliable controls', async () => {
+	it('uses short labels and reliable controls', async () => {
 		getContentSchemaMock.mockResolvedValue({
 			canCreate: true,
 			canRead: true,
@@ -245,7 +245,7 @@ describe('WordPress v2 resource mapping', () => {
 			{ id: 'content:title', displayName: 'title', type: 'string' },
 			{
 				id: 'content:tags',
-				displayName: 'tags (JSON array of integer values)',
+				displayName: 'tags',
 				type: 'array',
 			},
 			{
@@ -259,7 +259,7 @@ describe('WordPress v2 resource mapping', () => {
 			{ id: 'content:published_at', type: 'dateTime' },
 			{
 				id: 'content:settings',
-				displayName: 'settings (JSON object)',
+				displayName: 'settings',
 				type: 'object',
 			},
 		]);

@@ -11,13 +11,22 @@ import { buildWordpressRequestBody, type WordpressWriteMode } from '../../helper
 import type { WordpressContentSchema } from '../../helpers/schemas';
 import { wordpressApiRequest } from '../../transport';
 
+const mapperDescription =
+	'For taxonomy fields, enter a JSON array of term IDs, such as [12, 34]. Enter [] to remove all terms.';
+const missingMapperParameter = Symbol('missingMapperParameter');
+
+function getMapperParameterName(operation: WordpressWriteMode): string {
+	return operation === 'create' ? 'createFieldsToSend' : 'updateFieldsToSend';
+}
+
 export function getWriteFieldsDescription(operation: WordpressWriteMode): INodeProperties[] {
 	return [
 		{
 			displayName: operation === 'create' ? 'Fields to send' : 'Fields to update',
-			name: 'fieldsToSend',
+			name: getMapperParameterName(operation),
 			type: 'resourceMapper',
 			default: { mappingMode: 'defineBelow', value: null },
+			description: mapperDescription,
 			noDataExpression: true,
 			required: true,
 			typeOptions: {
@@ -41,12 +50,42 @@ function isDataObject(value: unknown): value is IDataObject {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isUntouchedMapper(value: unknown): value is IDataObject {
+	if (!isDataObject(value)) return false;
+	const keys = Object.keys(value);
+	return (
+		keys.length === 2 &&
+		keys.includes('mappingMode') &&
+		keys.includes('value') &&
+		value.mappingMode === 'defineBelow' &&
+		value.value === null
+	);
+}
+
 function getMapperValue(
 	context: IExecuteFunctions,
 	itemIndex: number,
+	operation: WordpressWriteMode,
 ): Readonly<Record<string, unknown>> {
-	const parameter = 'fieldsToSend';
-	const mapper: unknown = context.getNodeParameter(parameter, itemIndex, {});
+	const operationParameter = getMapperParameterName(operation);
+	const operationMapper: unknown = context.getNodeParameter(
+		operationParameter,
+		itemIndex,
+		missingMapperParameter,
+	);
+	let parameter = operationParameter;
+	let mapper = operationMapper;
+	if (operationMapper === missingMapperParameter || isUntouchedMapper(operationMapper)) {
+		const legacyMapper: unknown = context.getNodeParameter(
+			'fieldsToSend',
+			itemIndex,
+			missingMapperParameter,
+		);
+		if (legacyMapper !== missingMapperParameter) {
+			parameter = 'fieldsToSend';
+			mapper = legacyMapper;
+		}
+	}
 	if (!isDataObject(mapper)) {
 		throw new NodeOperationError(
 			context.getNode(),
@@ -180,7 +219,7 @@ export async function executeWrite(
 	const returnData: INodeExecutionData[] = [];
 	for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 		try {
-			const values = getMapperValue(context, itemIndex);
+			const values = getMapperValue(context, itemIndex, mode);
 			const { fields, metadata } = splitMapperValues(context, schema, values, itemIndex);
 			const body = buildWordpressRequestBody(context.getNode(), schema, mode, {
 				fields,

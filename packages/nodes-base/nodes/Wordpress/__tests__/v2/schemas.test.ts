@@ -100,6 +100,26 @@ describe('WordPress v2 content schema discovery', () => {
 		).toEqual([]);
 	});
 
+	it('accepts an empty metadata property map serialized as an array', () => {
+		const result = parseContentSchema(
+			node,
+			options({ meta: { type: 'object', properties: [] } }),
+			postType,
+		);
+
+		expect(result.writableMetadata).toEqual([]);
+	});
+
+	it('rejects a non-empty metadata property array', () => {
+		expect(() =>
+			parseContentSchema(
+				node,
+				options({ meta: { type: 'object', properties: [{ field: { type: 'string' } }] } }),
+				postType,
+			),
+		).toThrow(/invalid metadata properties/);
+	});
+
 	it('parses all supported metadata types and nullable metadata', () => {
 		const metaProperties: Record<string, unknown> = Object.fromEntries(
 			['string', 'boolean', 'integer', 'number', 'array', 'object'].map((type) => [type, { type }]),

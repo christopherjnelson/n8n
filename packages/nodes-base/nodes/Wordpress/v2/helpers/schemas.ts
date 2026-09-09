@@ -149,8 +149,12 @@ function parseMetadata(
 		throw schemaError(node, 'a metadata container that is not an object');
 	}
 	if (meta.properties === undefined) return [];
-	if (!isRecord(meta.properties)) throw schemaError(node, 'invalid metadata properties');
 	const required = parseRequired(node, meta.required);
+	if (Array.isArray(meta.properties)) {
+		if (meta.properties.length === 0) return [];
+		throw schemaError(node, 'invalid metadata properties');
+	}
+	if (!isRecord(meta.properties)) throw schemaError(node, 'invalid metadata properties');
 	return Object.entries(meta.properties).map(([name, property]) =>
 		parseProperty(node, name, property, required),
 	);

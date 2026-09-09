@@ -13,6 +13,17 @@ export type WordpressPostType = {
 
 type WordpressFunctions = IExecuteFunctions | ILoadOptionsFunctions;
 
+function isSupportedContentPostType(slug: string): boolean {
+	return slug !== 'attachment' && slug !== 'nav_menu_item' && !slug.startsWith('wp_');
+}
+
+function unsupportedContentType(node: INode): NodeOperationError {
+	return new NodeOperationError(
+		node,
+		'The selected type uses a specialized WordPress API and is not supported by the Content resource. Select Posts, Pages, or a custom post type.',
+	);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -100,6 +111,7 @@ export function parsePostTypeCollection(node: INode, payload: unknown): Wordpres
 				"The post type slug doesn't match its list key. Check the WordPress REST configuration and try again.",
 			);
 		}
+		if (!isSupportedContentPostType(slug)) continue;
 		if (!hasUsableRestRoute(node, value)) continue;
 		const postType = parsePostType(node, value);
 		postTypes.push(postType);
@@ -124,6 +136,7 @@ export async function resolvePostType(
 	registeredSlug: string,
 ): Promise<WordpressPostType> {
 	const slug = validateRegisteredSlug(this.getNode(), registeredSlug);
+	if (!isSupportedContentPostType(slug)) throw unsupportedContentType(this.getNode());
 	const response = await wordpressApiRequest.call(
 		this,
 		'GET',

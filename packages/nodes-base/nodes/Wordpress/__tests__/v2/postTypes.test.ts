@@ -74,6 +74,8 @@ describe('WordPress v2 post type discovery', () => {
 		wordpressApiRequestMock.mockResolvedValue({
 			bs_workflow: workflowType,
 			missing_base: { ...workflowType, slug: 'missing_base', rest_base: false },
+			attachment: { ...workflowType, slug: 'attachment', name: 'Media' },
+			wp_template: { ...workflowType, slug: 'wp_template', name: 'Templates' },
 		});
 		const loadContext = {
 			getNode: vi.fn().mockReturnValue(node),
@@ -85,6 +87,46 @@ describe('WordPress v2 post type discovery', () => {
 		});
 		expect(wordpressApiRequestMock).toHaveBeenCalledTimes(1);
 	});
+
+	it('lists posts, pages, and ordinary custom post types', async () => {
+		const type = (slug: string, name: string, restBase = slug) => ({
+			...workflowType,
+			slug,
+			name,
+			rest_base: restBase,
+		});
+		wordpressApiRequestMock.mockResolvedValue({
+			attachment: type('attachment', 'Media', 'media'),
+			wp_font_family: type('wp_font_family', 'Font Families'),
+			wp_global_styles: type('wp_global_styles', 'Global Styles'),
+			nav_menu_item: type('nav_menu_item', 'Navigation Menu Items'),
+			wp_navigation: type('wp_navigation', 'Navigation Menus'),
+			page: type('page', 'Pages', 'pages'),
+			wp_block: type('wp_block', 'Patterns'),
+			post: type('post', 'Posts', 'posts'),
+			wp_template_part: type('wp_template_part', 'Template Parts'),
+			wp_template: type('wp_template', 'Templates'),
+			bs_workflow: workflowType,
+		});
+
+		await expect(searchPostTypes.call(context)).resolves.toEqual({
+			results: [
+				{ name: 'Pages', value: 'page' },
+				{ name: 'Posts', value: 'post' },
+				{ name: 'Workflows', value: 'bs_workflow' },
+			],
+		});
+	});
+
+	it.each(['attachment', 'nav_menu_item', 'wp_template'])(
+		'rejects the specialized type %s before discovery',
+		async (slug) => {
+			await expect(resolvePostType.call(context, slug)).rejects.toThrow(
+				/not supported by the Content resource/,
+			);
+			expect(wordpressApiRequestMock).not.toHaveBeenCalled();
+		},
+	);
 
 	it('skips post types that do not have a usable REST route', () => {
 		const validPost = {

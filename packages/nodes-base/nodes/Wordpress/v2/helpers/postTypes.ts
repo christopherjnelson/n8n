@@ -13,6 +13,17 @@ export type WordpressPostType = {
 
 type WordpressFunctions = IExecuteFunctions | ILoadOptionsFunctions;
 
+function isSupportedContentPostType(slug: string): boolean {
+	return slug !== 'attachment' && slug !== 'nav_menu_item' && !slug.startsWith('wp_');
+}
+
+function unsupportedContentType(node: INode): NodeOperationError {
+	return new NodeOperationError(
+		node,
+		'The selected type uses a specialized WordPress API and is not supported by the Content resource. Select Posts, Pages, or a custom post type.',
+	);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -50,6 +61,26 @@ export function parsePostType(node: INode, payload: unknown): WordpressPostType 
 	return { slug, name, restBase, restNamespace };
 }
 
+function hasUsableRestRoute(node: INode, payload: Record<string, unknown>): boolean {
+	const restBase = payload.rest_base;
+	const restNamespace = payload.rest_namespace;
+	if (
+		typeof restBase !== 'string' ||
+		restBase.length === 0 ||
+		typeof restNamespace !== 'string' ||
+		restNamespace.length === 0
+	) {
+		return false;
+	}
+	try {
+		buildRestPath(node, { namespace: restNamespace, base: restBase });
+		return true;
+	} catch (error) {
+		if (error instanceof NodeOperationError) return false;
+		throw error;
+	}
+}
+
 export function parsePostTypeCollection(node: INode, payload: unknown): WordpressPostType[] {
 	if (!isRecord(payload)) {
 		throw new NodeOperationError(
@@ -66,13 +97,23 @@ export function parsePostTypeCollection(node: INode, payload: unknown): Wordpres
 				'WordPress returned an invalid post type key. Check the WordPress REST configuration and try again.',
 			);
 		}
-		const postType = parsePostType(node, value);
-		if (key !== postType.slug) {
+		if (!isRecord(value)) {
+			throw new NodeOperationError(
+				node,
+				'WordPress returned an invalid post type response. Check the WordPress REST configuration and try again.',
+			);
+		}
+		const slug = validateRegisteredSlug(node, requiredString(node, value, 'slug'));
+		requiredString(node, value, 'name');
+		if (key !== slug) {
 			throw new NodeOperationError(
 				node,
 				"The post type slug doesn't match its list key. Check the WordPress REST configuration and try again.",
 			);
 		}
+		if (!isSupportedContentPostType(slug)) continue;
+		if (!hasUsableRestRoute(node, value)) continue;
+		const postType = parsePostType(node, value);
 		postTypes.push(postType);
 	}
 
@@ -95,6 +136,7 @@ export async function resolvePostType(
 	registeredSlug: string,
 ): Promise<WordpressPostType> {
 	const slug = validateRegisteredSlug(this.getNode(), registeredSlug);
+	if (!isSupportedContentPostType(slug)) throw unsupportedContentType(this.getNode());
 	const response = await wordpressApiRequest.call(
 		this,
 		'GET',

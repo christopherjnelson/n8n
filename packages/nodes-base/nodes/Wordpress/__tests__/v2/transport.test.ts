@@ -1,4 +1,4 @@
-import type { IExecuteFunctions, INode } from 'n8n-workflow';
+import type { IExecuteFunctions, ILoadOptionsFunctions, INode } from 'n8n-workflow';
 import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
 import { wordpressApiRequest, wordpressApiRequestWithResponse } from '../../v2/transport';
@@ -27,7 +27,42 @@ function createContext(authType: AuthType = 'basicAuth') {
 	return { context, getCredentials, getNodeParameter, requestWithAuthentication };
 }
 
+function createLoadOptionsContext(authType?: AuthType) {
+	const requestWithAuthentication = vi.fn().mockResolvedValue({ ok: true });
+	const getCurrentNodeParameter = vi.fn().mockReturnValue(authType);
+	const getCredentials = vi
+		.fn()
+		.mockImplementation((credentialType: string) =>
+			credentialType === 'wordpressOAuth2Api'
+				? { wordpressSite: 'myblog.wordpress.com' }
+				: { url: 'https://wordpress.example', allowUnauthorizedCerts: false },
+		);
+	const context = {
+		getNode: vi.fn().mockReturnValue({ name: 'WordPress' } as INode),
+		getCurrentNodeParameter,
+		getCredentials,
+		helpers: { requestWithAuthentication },
+	} as unknown as ILoadOptionsFunctions;
+	return { context, getCredentials, getCurrentNodeParameter, requestWithAuthentication };
+}
+
 describe('WordPress v2 transport', () => {
+	it('uses Basic Auth by default in a load-options context', async () => {
+		const { context, getCredentials, getCurrentNodeParameter } = createLoadOptionsContext();
+
+		await wordpressApiRequest.call(context, 'GET', { namespace: 'wp/v2', base: 'types' });
+
+		expect(getCurrentNodeParameter).toHaveBeenCalledWith('authType');
+		expect(getCredentials).toHaveBeenCalledWith('wordpressApi');
+	});
+
+	it('uses the current OAuth2 selection in a load-options context', async () => {
+		const { context, getCredentials } = createLoadOptionsContext('oAuth2');
+
+		await wordpressApiRequest.call(context, 'GET', { namespace: 'wp/v2', base: 'types' });
+
+		expect(getCredentials).toHaveBeenCalledWith('wordpressOAuth2Api');
+	});
 	it('uses the self-hosted credential URL and TLS setting', async () => {
 		const { context, getCredentials, requestWithAuthentication } = createContext();
 

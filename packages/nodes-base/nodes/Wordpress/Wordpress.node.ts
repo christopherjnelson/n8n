@@ -11,7 +11,7 @@ export class Wordpress extends VersionedNodeType {
 			name: 'wordpress',
 			icon: 'file:wordpress.svg',
 			group: ['output'],
-			defaultVersion: 1,
+			defaultVersion: 2,
 			subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
 			description: 'Consume Wordpress API',
 			usableAsTool: true,

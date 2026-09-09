@@ -89,7 +89,11 @@ async function request(
 ): Promise<unknown> {
 	const node = this.getNode();
 	const path = buildRestPath(node, route);
-	const authType = this.getNodeParameter('authType', 0, 'basicAuth');
+	const selectedAuthType =
+		'getCurrentNodeParameter' in this
+			? this.getCurrentNodeParameter('authType')
+			: this.getNodeParameter('authType', 0, 'basicAuth');
+	const authType = selectedAuthType ?? 'basicAuth';
 	if (authType !== 'basicAuth' && authType !== 'oAuth2') {
 		throw new NodeOperationError(
 			node,

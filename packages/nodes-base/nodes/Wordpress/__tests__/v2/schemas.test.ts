@@ -2,6 +2,7 @@ import type { ILoadOptionsFunctions, INode } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 import type { Mock } from 'vitest';
 
+import { buildWordpressRequestBody } from '../../v2/helpers/requestBody';
 import { getContentSchema, parseContentSchema } from '../../v2/helpers/schemas';
 import * as Transport from '../../v2/transport';
 import type * as TransportType from '../../v2/transport';
@@ -100,6 +101,40 @@ describe('WordPress v2 content schema discovery', () => {
 		).toEqual([]);
 	});
 
+	it('accepts an empty metadata property map serialized as an array', () => {
+		const result = parseContentSchema(
+			node,
+			options({ meta: { type: 'object', properties: [] } }),
+			postType,
+		);
+
+		expect(result.writableMetadata).toEqual([]);
+	});
+
+	it.each([false, true])(
+		'accepts an empty metadata property map with container required set to %s',
+		(required) => {
+			const result = parseContentSchema(
+				node,
+				options({ meta: { type: 'object', required, properties: [] } }),
+				postType,
+			);
+
+			expect(result.writableProperties).toMatchObject([{ name: 'meta', required }]);
+			expect(result.writableMetadata).toEqual([]);
+		},
+	);
+
+	it('rejects a non-empty metadata property array', () => {
+		expect(() =>
+			parseContentSchema(
+				node,
+				options({ meta: { type: 'object', properties: [{ field: { type: 'string' } }] } }),
+				postType,
+			),
+		).toThrow(/invalid metadata properties/);
+	});
+
 	it('parses all supported metadata types and nullable metadata', () => {
 		const metaProperties: Record<string, unknown> = Object.fromEntries(
 			['string', 'boolean', 'integer', 'number', 'array', 'object'].map((type) => [type, { type }]),
@@ -147,6 +182,179 @@ describe('WordPress v2 content schema discovery', () => {
 		]);
 	});
 
+	it('normalizes documented core response envelopes and preserves schema details', () => {
+		const envelope = {
+			type: 'object',
+			description: 'Rendered content',
+			properties: {
+				raw: { type: 'string' },
+				rendered: { type: 'string', readonly: true },
+				protected: { type: 'boolean' },
+			},
+		};
+		const result = parseContentSchema(
+			node,
+			options(
+				{},
+				{},
+				{
+					title: envelope,
+					content: envelope,
+					excerpt: envelope,
+					settings: {
+						type: 'object',
+						required: ['mode'],
+						properties: {
+							mode: { type: 'string' },
+							count: { type: 'integer', readonly: true },
+						},
+					},
+					tags: { type: 'array', items: { type: 'integer' } },
+					status: { type: 'string', enum: ['draft', 'publish'] },
+					published_at: { type: 'string', format: 'date-time' },
+				},
+			),
+			postType,
+		);
+
+		expect(result.writableProperties).toMatchObject([
+			{ name: 'title', type: 'string', description: 'Rendered content' },
+			{ name: 'content', type: 'string' },
+			{ name: 'excerpt', type: 'string' },
+			{
+				name: 'settings',
+				type: 'object',
+				properties: [
+					{ name: 'mode', type: 'string', required: true, readOnly: false },
+					{ name: 'count', type: 'integer', required: false, readOnly: true },
+				],
+			},
+			{ name: 'tags', type: 'array', itemType: 'integer' },
+			{ name: 'status', enum: ['draft', 'publish'] },
+			{ name: 'published_at', format: 'date-time' },
+		]);
+	});
+
+	it('keeps a raw-shaped metadata title as an object', () => {
+		const meta = {
+			type: 'object',
+			properties: { title: { type: 'object', properties: { raw: { type: 'string' } } } },
+		};
+		const result = parseContentSchema(node, options({ meta }), postType);
+
+		expect(result.writableMetadata[0]).toMatchObject({ name: 'title', type: 'object' });
+	});
+
+	it('accepts an array of objects without traversing its item schema', () => {
+		const result = parseContentSchema(
+			node,
+			options({}, {}, { blocks: { type: 'array', items: { type: 'object', properties: null } } }),
+			postType,
+		);
+
+		expect(result.writableProperties[0]).toMatchObject({
+			name: 'blocks',
+			type: 'array',
+			itemType: 'object',
+		});
+	});
+
+	it('builds plain core strings from a realistic OPTIONS envelope', () => {
+		const field = {
+			type: 'object',
+			properties: {
+				raw: { type: 'string' },
+				rendered: { type: 'string', readonly: true },
+			},
+		};
+		const schema = parseContentSchema(
+			node,
+			options({}, {}, { title: field, content: field, excerpt: field }),
+			postType,
+		);
+		const fields = { title: 'Title', content: '<p>Body</p>', excerpt: 'Summary' };
+
+		expect(buildWordpressRequestBody(node, schema, 'create', { fields })).toEqual(fields);
+	});
+
+	it.each([
+		[
+			'unsafe nested name',
+			{ settings: { type: 'object', properties: { constructor: { type: 'string' } } } },
+		],
+		['malformed array items', { list: { type: 'array', items: [] } }],
+		['malformed enum', { status: { type: 'string', enum: [false] } }],
+		['malformed format', { date: { type: 'string', format: false } }],
+		[
+			'malformed child read-only flag',
+			{ settings: { type: 'object', properties: { value: { type: 'string', readonly: 'yes' } } } },
+		],
+		[
+			'malformed raw read-only flag',
+			{ title: { type: 'object', properties: { raw: { type: 'string', readonly: 'no' } } } },
+		],
+		['oversized description', { title: { type: 'string', description: 'x'.repeat(2_001) } }],
+		['enum on an object', { settings: { type: 'object', enum: ['value'] } }],
+	])('rejects %s', (_name, args) => {
+		expect(() => parseContentSchema(node, options({}, {}, args), postType)).toThrow(
+			NodeOperationError,
+		);
+	});
+
+	it('rejects oversized metadata, endpoint, and method collections', () => {
+		const metadataProperties = Object.fromEntries(
+			Array.from({ length: 201 }, (_, index) => [`field_${index}`, { type: 'string' }]),
+		);
+		expect(() =>
+			parseContentSchema(
+				node,
+				options({ meta: { type: 'object', properties: metadataProperties } }),
+				postType,
+			),
+		).toThrow(/oversized metadata/);
+		expect(() =>
+			parseContentSchema(
+				node,
+				{ ...options(), endpoints: Array(21).fill({ methods: [] }) },
+				postType,
+			),
+		).toThrow(/oversized endpoint/);
+		expect(() =>
+			parseContentSchema(node, { ...options(), methods: Array(21).fill('GET') }, postType),
+		).toThrow(/oversized route method/);
+	});
+
+	it('does not normalize an arbitrary object with a raw child', () => {
+		const result = parseContentSchema(
+			node,
+			options({}, {}, { custom: { type: 'object', properties: { raw: { type: 'string' } } } }),
+			postType,
+		);
+
+		expect(result.writableProperties[0]).toMatchObject({ name: 'custom', type: 'object' });
+	});
+
+	it.each([
+		['a missing rendered child', { raw: { type: 'string' } }],
+		[
+			'a writable rendered child',
+			{ raw: { type: 'string' }, rendered: { type: 'string', readonly: false } },
+		],
+		[
+			'a non-string rendered child',
+			{ raw: { type: 'string' }, rendered: { type: 'object', readonly: true } },
+		],
+		['a partial arbitrary envelope', { raw: { type: 'string' }, protected: { type: 'boolean' } }],
+	])('does not normalize a core field with %s', (_name, properties) => {
+		const result = parseContentSchema(
+			node,
+			options({}, {}, { title: { type: 'object', properties } }),
+			postType,
+		);
+
+		expect(result.writableProperties[0]).toMatchObject({ name: 'title', type: 'object' });
+	});
+
 	it('preserves metadata required and read-only flags', () => {
 		const result = parseContentSchema(
 			node,
@@ -181,6 +389,14 @@ describe('WordPress v2 content schema discovery', () => {
 		['a malformed POST argument record', options({}, {}, { content: null })],
 		['a missing POST argument type', options({}, {}, { content: {} })],
 		['a missing metadata type', options({ meta: { type: 'object', properties: { field: {} } } })],
+		[
+			'a string metadata required value without properties',
+			options({ meta: { type: 'object', required: 'field' } }),
+		],
+		[
+			'an object metadata required value without properties',
+			options({ meta: { type: 'object', required: {} } }),
+		],
 		['a non-object metadata container', options({ meta: { type: 'string', properties: {} } })],
 		[
 			'an unsupported metadata type',

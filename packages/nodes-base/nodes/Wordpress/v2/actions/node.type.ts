@@ -1,2 +1,3 @@
-export type WordpressResource = 'post';
-export type WordpressOperation = 'get' | 'getMany';
+export type WordpressResource = 'post' | 'user';
+export type WordpressOperation = 'create' | 'get' | 'getMany' | 'update';
+export type WordpressUserOperation = 'create' | 'get' | 'getAll' | 'update';

@@ -270,6 +270,7 @@ describe('WordPress v2 node', () => {
 			displayOptions: { show: { resource: ['post'], operation: ['create'] } },
 			typeOptions: {
 				resourceMapper: {
+					addAllFields: false,
 					supportAutoMap: false,
 					allowEmptyValues: true,
 					valuesLabel: 'Fields to send',
@@ -281,7 +282,9 @@ describe('WordPress v2 node', () => {
 			description:
 				'For taxonomy fields, enter a JSON array of term IDs, such as [12, 34]. Enter [] to remove all terms.',
 			displayOptions: { show: { resource: ['post'], operation: ['update'] } },
-			typeOptions: { resourceMapper: { valuesLabel: 'Fields to update' } },
+			typeOptions: {
+				resourceMapper: { valuesLabel: 'Fields to update', addAllFields: false },
+			},
 		});
 		expect(createFields?.name).not.toBe(updateFields?.name);
 		expect(createToggle).toMatchObject({

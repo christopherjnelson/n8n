@@ -114,7 +114,7 @@ describe('WordPress v2 resource mapping', () => {
 		expect(update.fields).toHaveLength(count);
 	});
 
-	it('shows only writable content fields', async () => {
+	it('shows required Create fields initially and keeps optional fields addable', async () => {
 		const result = await getContentFields.call(context('create'));
 
 		expect(result.fields).toEqual([
@@ -130,40 +130,43 @@ describe('WordPress v2 resource mapping', () => {
 				displayName: 'count',
 				type: 'number',
 				required: false,
-				removed: false,
+				removed: true,
 			}),
 			expect.objectContaining({
 				id: 'content:ratio',
 				displayName: 'ratio',
 				type: 'number',
 				required: false,
-				removed: false,
+				removed: true,
 			}),
 			expect.objectContaining({
 				id: 'content:enabled',
 				displayName: 'enabled',
 				type: 'boolean',
-				removed: false,
+				removed: true,
 			}),
 			expect.objectContaining({
 				id: 'content:list',
 				displayName: 'list',
 				type: 'array',
-				removed: false,
+				removed: true,
 			}),
 			expect.objectContaining({
 				id: 'content:config',
 				displayName: 'config',
 				type: 'object',
-				removed: false,
+				removed: true,
 			}),
 		]);
+		expect(result.fields.slice(1).every((field) => field.display && field.removed)).toBe(true);
 	});
 
-	it('keeps every field optional for update', async () => {
+	it('hides every Update field initially while keeping it addable', async () => {
 		const result = await getContentFields.call(context('update'));
 
 		expect(result.fields.every((field) => !field.required)).toBe(true);
+		expect(result.fields.every((field) => field.removed)).toBe(true);
+		expect(result.fields.every((field) => field.display)).toBe(true);
 	});
 
 	it('uses short labels and reliable controls', async () => {

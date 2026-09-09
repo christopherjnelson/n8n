@@ -72,17 +72,19 @@ function isCreateOperation(context: ILoadOptionsFunctions): boolean {
 export async function getContentFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
 	const schema = await getSchema.call(this);
 	if (schema === undefined) return { fields: [] };
+	const isCreate = isCreateOperation(this);
 	const contentFields = schema.writableProperties
 		.filter((property) => property.name !== 'meta' && !property.readOnly)
-		.map((property) =>
-			toMapperField(
+		.map((property) => {
+			const required = isCreate && property.required;
+			return toMapperField(
 				property,
 				`content:${property.name}`,
 				property.name,
-				isCreateOperation(this) && property.required,
-				false,
-			),
-		);
+				required,
+				!required,
+			);
+		});
 	return { fields: contentFields };
 }
 

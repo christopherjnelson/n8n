@@ -60,6 +60,9 @@ const writableSchema = {
 	],
 	writableMetadata: [
 		{ name: 'enabled', type: 'boolean', nullable: false, readOnly: false, required: false },
+		{ name: 'count', type: 'integer', nullable: false, readOnly: false, required: false },
+		{ name: 'label', type: 'string', nullable: false, readOnly: false, required: false },
+		{ name: 'items', type: 'array', nullable: false, readOnly: false, required: false },
 		{ name: 'settings', type: 'object', nullable: false, readOnly: false, required: false },
 		{ name: 'unused', type: 'string', nullable: true, readOnly: false, required: false },
 	],
@@ -245,6 +248,18 @@ describe('WordPress v2 node', () => {
 		const updateFields = description.properties.find(
 			(property) => property.name === 'updateFieldsToSend',
 		);
+		const createToggle = description.properties.find(
+			(property) => property.name === 'createSendMetadata',
+		);
+		const updateToggle = description.properties.find(
+			(property) => property.name === 'updateSendMetadata',
+		);
+		const createMetadata = description.properties.find(
+			(property) => property.name === 'createMetadata',
+		);
+		const updateMetadata = description.properties.find(
+			(property) => property.name === 'updateMetadata',
+		);
 		expect(createFields).toMatchObject({
 			required: true,
 			description:
@@ -266,6 +281,48 @@ describe('WordPress v2 node', () => {
 			typeOptions: { resourceMapper: { valuesLabel: 'Fields to update' } },
 		});
 		expect(createFields?.name).not.toBe(updateFields?.name);
+		expect(createToggle).toMatchObject({
+			displayName: 'Send Metadata',
+			default: false,
+			noDataExpression: true,
+			displayOptions: { show: { resource: ['post'], operation: ['create'] } },
+		});
+		expect(updateToggle).toMatchObject({
+			displayName: 'Send Metadata',
+			default: false,
+			displayOptions: { show: { resource: ['post'], operation: ['update'] } },
+		});
+		expect(createMetadata).toMatchObject({
+			displayName: 'Metadata',
+			description: 'Select the registered metadata fields to send',
+			displayOptions: {
+				show: { resource: ['post'], operation: ['create'], createSendMetadata: [true] },
+			},
+			typeOptions: {
+				resourceMapper: {
+					resourceMapperMethod: 'getMetadataFields',
+					valuesLabel: 'Metadata',
+					addAllFields: false,
+				},
+			},
+		});
+		expect(updateMetadata).toMatchObject({
+			displayOptions: {
+				show: { resource: ['post'], operation: ['update'], updateSendMetadata: [true] },
+			},
+		});
+		expect(
+			new Set(
+				[
+					createFields,
+					updateFields,
+					createToggle,
+					updateToggle,
+					createMetadata,
+					updateMetadata,
+				].map((property) => property?.name),
+			),
+		).toHaveProperty('size', 6);
 	});
 
 	it('sends resolved Resource Mapper arrays and objects as native values', async () => {
@@ -275,7 +332,7 @@ describe('WordPress v2 node', () => {
 				resource: 'post',
 				operation: 'create',
 				postType: 'bs_workflow',
-				fieldsToSend: mapperValue(
+				createFieldsToSend: mapperValue(
 					{
 						title: '',
 						sticky: false,
@@ -285,12 +342,15 @@ describe('WordPress v2 node', () => {
 						config: {},
 						summary: '',
 					},
-					{ enabled: false, settings: {}, unused: null },
-					['content:featured', 'metadata:unused'],
+					{},
+					['content:featured'],
 				),
+				createSendMetadata: true,
+				createMetadata: mapperValue({}, { enabled: false, settings: {} }),
 			},
 			{
-				fieldsToSend: mapperValue({ title: 'Second' }),
+				createFieldsToSend: mapperValue({ title: 'Second' }),
+				createMetadata: mapperValue({}, {}),
 			},
 		]);
 
@@ -352,47 +412,19 @@ describe('WordPress v2 node', () => {
 				},
 				{ title: operation },
 			);
-			expect(context.getNodeParameter).not.toHaveBeenCalledWith(
-				'fieldsToSend',
-				expect.anything(),
-				expect.anything(),
-			);
 		},
 	);
 
-	it.each(['create', 'update'] as const)(
-		'loads a stored legacy mapper for %s',
-		async (operation) => {
-			requestMock.mockResolvedValue({ id: 15 });
-			const context = createContext([
-				{
-					resource: 'post',
-					operation,
-					postType: 'bs_workflow',
-					...(operation === 'update' ? { itemId: 15 } : {}),
-					fieldsToSend: mapperValue({ title: 'Legacy' }),
-				},
-			]);
-
-			await executeV2(context);
-
-			expect(requestMock).toHaveBeenCalledWith(
-				'POST',
-				expect.objectContaining(operation === 'update' ? { suffix: [15] } : {}),
-				{ title: 'Legacy' },
-			);
-		},
-	);
-
-	it('uses legacy data when the create mapper has the exact untouched default', async () => {
-		requestMock.mockResolvedValue({ id: 16 });
+	it('does not read or send hidden metadata when the toggle is false', async () => {
+		requestMock.mockResolvedValue({ id: 20 });
 		const context = createContext([
 			{
 				resource: 'post',
 				operation: 'create',
 				postType: 'bs_workflow',
-				createFieldsToSend: { mappingMode: 'defineBelow', value: null },
-				fieldsToSend: mapperValue({ title: 'Legacy' }),
+				createFieldsToSend: mapperValue({ title: 'No metadata' }),
+				createSendMetadata: false,
+				createMetadata: mapperValue({}, { enabled: true }),
 			},
 		]);
 
@@ -401,46 +433,85 @@ describe('WordPress v2 node', () => {
 		expect(requestMock).toHaveBeenCalledWith(
 			'POST',
 			{ namespace: 'publisher/v3', base: 'library/items' },
-			{ title: 'Legacy' },
-		);
-	});
-
-	it('uses configured new mapper data when legacy data is also present', async () => {
-		requestMock.mockResolvedValue({ id: 17 });
-		const context = createContext([
-			{
-				resource: 'post',
-				operation: 'create',
-				postType: 'bs_workflow',
-				createFieldsToSend: mapperValue({ title: 'New' }),
-				fieldsToSend: mapperValue({ title: 'Legacy' }),
-			},
-		]);
-
-		await executeV2(context);
-
-		expect(requestMock).toHaveBeenCalledWith(
-			'POST',
-			{ namespace: 'publisher/v3', base: 'library/items' },
-			{ title: 'New' },
+			{ title: 'No metadata' },
 		);
 		expect(context.getNodeParameter).not.toHaveBeenCalledWith(
-			'fieldsToSend',
+			'createMetadata',
 			expect.anything(),
 			expect.anything(),
 		);
 	});
 
-	it('uses authored null mapper state instead of legacy data', async () => {
-		requestMock.mockResolvedValue({ id: 18 });
+	it('does not read metadata state from the other operation', async () => {
+		requestMock.mockResolvedValue({ id: 20 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'create',
+				postType: 'bs_workflow',
+				createFieldsToSend: mapperValue({ title: 'Create' }),
+				updateSendMetadata: true,
+				updateMetadata: mapperValue({}, { enabled: true }),
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items' },
+			{ title: 'Create' },
+		);
+		expect(context.getNodeParameter).not.toHaveBeenCalledWith(
+			'updateMetadata',
+			expect.anything(),
+			expect.anything(),
+		);
+	});
+
+	it('sends selected metadata values when the toggle is true', async () => {
+		requestMock.mockResolvedValue({ id: 21 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'create',
+				postType: 'bs_workflow',
+				createFieldsToSend: mapperValue({ title: '' }),
+				createSendMetadata: true,
+				createMetadata: mapperValue(
+					{},
+					{ enabled: false, count: 0, label: '', items: [], settings: {} },
+				),
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items' },
+			{
+				title: '',
+				meta: { enabled: false, count: 0, label: '', items: [], settings: {} },
+			},
+		);
+	});
+
+	it.each([
+		['missing', undefined],
+		['untouched', { mappingMode: 'defineBelow', value: null }],
+		['empty', mapperValue({}, {})],
+	] as const)('omits metadata when the enabled metadata mapper is %s', async (_name, metadata) => {
+		requestMock.mockResolvedValue({ id: 22 });
 		const context = createContext([
 			{
 				resource: 'post',
 				operation: 'update',
 				postType: 'bs_workflow',
-				itemId: 18,
-				updateFieldsToSend: { mappingMode: 'defineBelow', value: null, schema: [] },
-				fieldsToSend: mapperValue({ title: 'Legacy' }),
+				itemId: 22,
+				updateFieldsToSend: mapperValue({}),
+				updateSendMetadata: true,
+				...(metadata === undefined ? {} : { updateMetadata: metadata }),
 			},
 		]);
 
@@ -448,17 +519,60 @@ describe('WordPress v2 node', () => {
 
 		expect(requestMock).toHaveBeenCalledWith(
 			'POST',
-			{ namespace: 'publisher/v3', base: 'library/items', suffix: [18] },
+			{ namespace: 'publisher/v3', base: 'library/items', suffix: [22] },
 			{},
-		);
-		expect(context.getNodeParameter).not.toHaveBeenCalledWith(
-			'fieldsToSend',
-			expect.anything(),
-			expect.anything(),
 		);
 	});
 
-	it('uses an untouched mapper as an empty mapping when legacy data is absent', async () => {
+	it.each([
+		['stale', mapperValue({ title: 'Wrong mapper' })],
+		[
+			'unsafe',
+			{
+				mappingMode: 'defineBelow',
+				value: unsafeValue(),
+				schema: [{ id: '__proto__', removed: false }],
+			},
+		],
+	] as const)('rejects %s metadata when metadata is enabled', async (_name, metadata) => {
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'create',
+				postType: 'bs_workflow',
+				createFieldsToSend: mapperValue({ title: 'Test' }),
+				createSendMetadata: true,
+				createMetadata: metadata,
+			},
+		]);
+
+		await expect(executeV2(context)).rejects.toThrow();
+		expect(requestMock).not.toHaveBeenCalled();
+	});
+
+	it('returns an item-paired error for invalid enabled metadata', async () => {
+		const context = createContext(
+			[
+				{
+					resource: 'post',
+					operation: 'create',
+					postType: 'bs_workflow',
+					createFieldsToSend: mapperValue({ title: 'Test' }),
+					createSendMetadata: true,
+					createMetadata: mapperValue({ title: 'Wrong mapper' }),
+				},
+			],
+			true,
+		);
+
+		const result = await executeV2(context);
+
+		expect(result[0]?.[0]?.json.error).toContain('metadata mapping');
+		expect(result[0]?.[0]?.pairedItem).toEqual({ item: 0 });
+		expect(requestMock).not.toHaveBeenCalled();
+	});
+
+	it('uses an untouched core mapper as an empty mapping', async () => {
 		requestMock.mockResolvedValue({ id: 19 });
 		const context = createContext([
 			{
@@ -479,7 +593,7 @@ describe('WordPress v2 node', () => {
 		);
 	});
 
-	it('reports invalid mapping when no current or legacy mapper exists', async () => {
+	it('reports invalid mapping when the core mapper is missing', async () => {
 		const context = createContext([
 			{ resource: 'post', operation: 'create', postType: 'bs_workflow' },
 		]);
@@ -495,7 +609,7 @@ describe('WordPress v2 node', () => {
 				resource: 'post',
 				operation: 'create',
 				postType: 'bs_workflow',
-				fieldsToSend: mapperValue({ title: 'Nullable', score: null }),
+				createFieldsToSend: mapperValue({ title: 'Nullable', score: null }),
 			},
 		]);
 
@@ -507,9 +621,9 @@ describe('WordPress v2 node', () => {
 			{ title: 'Nullable', score: null },
 		);
 		const parameterNames = context.getNodeParameter.mock.calls.map(([name]) => name);
-		expect(parameterNames).toContain('fieldsToSend');
-		expect(parameterNames).toContain('fieldsToSend.value');
-		expect(parameterNames).not.toContain('metadata');
+		expect(parameterNames).toContain('createFieldsToSend');
+		expect(parameterNames).toContain('createFieldsToSend.value');
+		expect(parameterNames).not.toContain('createMetadata');
 	});
 
 	it('rejects malformed mapper values with the item index', async () => {
@@ -518,7 +632,7 @@ describe('WordPress v2 node', () => {
 				resource: 'post',
 				operation: 'create',
 				postType: 'post',
-				fieldsToSend: { mappingMode: 'defineBelow', value: 'invalid', schema: [] },
+				createFieldsToSend: { mappingMode: 'defineBelow', value: 'invalid', schema: [] },
 			},
 		]);
 
@@ -571,6 +685,10 @@ describe('WordPress v2 node', () => {
 			},
 		},
 		{
+			name: 'a metadata value in the content mapper',
+			mapper: mapperValue({}, { enabled: true }),
+		},
+		{
 			name: 'an unsafe value key',
 			mapper: {
 				mappingMode: 'defineBelow',
@@ -584,7 +702,7 @@ describe('WordPress v2 node', () => {
 				resource: 'post',
 				operation: 'create',
 				postType: 'post',
-				fieldsToSend: mapper,
+				createFieldsToSend: mapper,
 			},
 		]);
 
@@ -601,7 +719,7 @@ describe('WordPress v2 node', () => {
 					operation: 'update',
 					postType: 'post',
 					itemId: 5,
-					fieldsToSend: mapperValue({}),
+					updateFieldsToSend: mapperValue({}),
 				},
 			],
 			true,
@@ -624,7 +742,7 @@ describe('WordPress v2 node', () => {
 		expect(requestMock).not.toHaveBeenCalled();
 	});
 
-	it('updates one item without sending omitted fields or metadata', async () => {
+	it('updates one item without sending omitted metadata', async () => {
 		requestMock.mockResolvedValue({ id: 21 });
 		const context = createContext([
 			{
@@ -632,7 +750,7 @@ describe('WordPress v2 node', () => {
 				operation: 'update',
 				postType: 'bs_workflow',
 				itemId: 21,
-				updateFieldsToSend: mapperValue({ sticky: false }, { enabled: false }),
+				updateFieldsToSend: mapperValue({ sticky: false }),
 			},
 		]);
 
@@ -641,7 +759,7 @@ describe('WordPress v2 node', () => {
 		expect(requestMock).toHaveBeenCalledWith(
 			'POST',
 			{ namespace: 'publisher/v3', base: 'library/items', suffix: [21] },
-			{ sticky: false, meta: { enabled: false } },
+			{ sticky: false },
 		);
 	});
 
@@ -653,7 +771,7 @@ describe('WordPress v2 node', () => {
 				operation: 'update',
 				postType: 'bs_workflow',
 				itemId: 22,
-				fieldsToSend: {
+				updateFieldsToSend: {
 					mappingMode: 'defineBelow',
 					value: {},
 					schema: [
@@ -681,7 +799,9 @@ describe('WordPress v2 node', () => {
 				operation: 'update',
 				postType: 'bs_workflow',
 				itemId: 22,
-				fieldsToSend: mapperValue({ enabled: false }, { enabled: true }),
+				updateFieldsToSend: mapperValue({ enabled: false }),
+				updateSendMetadata: true,
+				updateMetadata: mapperValue({}, { enabled: true }),
 			},
 		]);
 
@@ -703,9 +823,9 @@ describe('WordPress v2 node', () => {
 					operation: 'update',
 					postType: 'post',
 					itemId: 0,
-					fieldsToSend: mapperValue({}),
+					updateFieldsToSend: mapperValue({}),
 				},
-				{ itemId: 22, fieldsToSend: mapperValue({}) },
+				{ itemId: 22, updateFieldsToSend: mapperValue({}) },
 			],
 			true,
 		);

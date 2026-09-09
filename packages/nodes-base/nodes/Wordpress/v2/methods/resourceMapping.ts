@@ -83,20 +83,29 @@ export async function getContentFields(this: ILoadOptionsFunctions): Promise<Res
 				false,
 			),
 		);
+	return { fields: contentFields };
+}
+
+export async function getMetadataFields(
+	this: ILoadOptionsFunctions,
+): Promise<ResourceMapperFields> {
+	const schema = await getSchema.call(this);
+	if (schema === undefined) return { fields: [] };
 	const metaRequired = schema.writableProperties.find(
 		(property) => property.name === 'meta',
 	)?.required;
-	const metadataFields = schema.writableMetadata
-		.filter((property) => !property.readOnly)
-		.map((property) => {
-			const required = isCreateOperation(this) && metaRequired === true && property.required;
-			return toMapperField(
-				property,
-				`metadata:${property.name}`,
-				`Metadata: ${property.name}`,
-				required,
-				!required,
-			);
-		});
-	return { fields: [...contentFields, ...metadataFields] };
+	return {
+		fields: schema.writableMetadata
+			.filter((property) => !property.readOnly)
+			.map((property) => {
+				const required = isCreateOperation(this) && metaRequired === true && property.required;
+				return toMapperField(
+					property,
+					`metadata:${property.name}`,
+					property.name,
+					required,
+					!required,
+				);
+			}),
+	};
 }

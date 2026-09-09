@@ -19,7 +19,16 @@ function getMapperParameterName(operation: WordpressWriteMode): string {
 	return operation === 'create' ? 'createFieldsToSend' : 'updateFieldsToSend';
 }
 
+function getMetadataToggleName(operation: WordpressWriteMode): string {
+	return operation === 'create' ? 'createSendMetadata' : 'updateSendMetadata';
+}
+
+function getMetadataParameterName(operation: WordpressWriteMode): string {
+	return operation === 'create' ? 'createMetadata' : 'updateMetadata';
+}
+
 export function getWriteFieldsDescription(operation: WordpressWriteMode): INodeProperties[] {
+	const toggleName = getMetadataToggleName(operation);
 	return [
 		{
 			displayName: operation === 'create' ? 'Fields to send' : 'Fields to update',
@@ -43,6 +52,39 @@ export function getWriteFieldsDescription(operation: WordpressWriteMode): INodeP
 			},
 			displayOptions: { show: { resource: ['post'], operation: [operation] } },
 		},
+		{
+			displayName: 'Send Metadata',
+			name: toggleName,
+			type: 'boolean',
+			default: false,
+			noDataExpression: true,
+			description: 'Whether to send registered metadata fields',
+			displayOptions: { show: { resource: ['post'], operation: [operation] } },
+		},
+		{
+			displayName: 'Metadata',
+			name: getMetadataParameterName(operation),
+			type: 'resourceMapper',
+			default: { mappingMode: 'defineBelow', value: null },
+			description: 'Select the registered metadata fields to send',
+			noDataExpression: true,
+			required: true,
+			typeOptions: {
+				loadOptionsDependsOn: ['postType.value', 'operation'],
+				resourceMapper: {
+					resourceMapperMethod: 'getMetadataFields',
+					mode: 'add',
+					valuesLabel: 'Metadata',
+					fieldWords: { singular: 'metadata field', plural: 'metadata fields' },
+					addAllFields: false,
+					supportAutoMap: false,
+					allowEmptyValues: true,
+				},
+			},
+			displayOptions: {
+				show: { resource: ['post'], operation: [operation], [toggleName]: [true] },
+			},
+		},
 	];
 }
 
@@ -62,30 +104,12 @@ function isUntouchedMapper(value: unknown): value is IDataObject {
 	);
 }
 
-function getMapperValue(
+function parseMapperValue(
 	context: IExecuteFunctions,
 	itemIndex: number,
-	operation: WordpressWriteMode,
+	parameter: string,
+	mapper: unknown,
 ): Readonly<Record<string, unknown>> {
-	const operationParameter = getMapperParameterName(operation);
-	const operationMapper: unknown = context.getNodeParameter(
-		operationParameter,
-		itemIndex,
-		missingMapperParameter,
-	);
-	let parameter = operationParameter;
-	let mapper = operationMapper;
-	if (operationMapper === missingMapperParameter || isUntouchedMapper(operationMapper)) {
-		const legacyMapper: unknown = context.getNodeParameter(
-			'fieldsToSend',
-			itemIndex,
-			missingMapperParameter,
-		);
-		if (legacyMapper !== missingMapperParameter) {
-			parameter = 'fieldsToSend';
-			mapper = legacyMapper;
-		}
-	}
 	if (!isDataObject(mapper)) {
 		throw new NodeOperationError(
 			context.getNode(),
@@ -163,38 +187,73 @@ function getMapperValue(
 	return selected;
 }
 
-function splitMapperValues(
+function getMapperValue(
+	context: IExecuteFunctions,
+	itemIndex: number,
+	operation: WordpressWriteMode,
+): Readonly<Record<string, unknown>> {
+	const parameter = getMapperParameterName(operation);
+	const mapper: unknown = context.getNodeParameter(parameter, itemIndex, missingMapperParameter);
+	return parseMapperValue(context, itemIndex, parameter, mapper);
+}
+
+function selectMapperValues(
 	context: IExecuteFunctions,
 	schema: WordpressContentSchema,
 	values: Readonly<Record<string, unknown>>,
 	itemIndex: number,
-): { fields: Record<string, unknown>; metadata: Record<string, unknown> } {
-	const destinations = new Map<string, { name: string; metadata: boolean }>();
-	for (const property of schema.writableProperties) {
-		if (property.name !== 'meta' && !property.readOnly) {
-			destinations.set(`content:${property.name}`, { name: property.name, metadata: false });
-		}
-	}
-	for (const property of schema.writableMetadata) {
-		if (!property.readOnly) {
-			destinations.set(`metadata:${property.name}`, { name: property.name, metadata: true });
-		}
-	}
-
-	const fields: Record<string, unknown> = {};
-	const metadata: Record<string, unknown> = {};
+	kind: 'content' | 'metadata',
+): Record<string, unknown> {
+	const properties =
+		kind === 'content'
+			? schema.writableProperties.filter((property) => property.name !== 'meta')
+			: schema.writableMetadata;
+	const destinations = new Map(
+		properties
+			.filter((property) => !property.readOnly)
+			.map((property) => [`${kind}:${property.name}`, property.name]),
+	);
+	const selected: Record<string, unknown> = {};
 	for (const [id, value] of Object.entries(values)) {
-		const destination = destinations.get(id);
-		if (!destination) {
+		const name = destinations.get(id);
+		if (name === undefined) {
 			throw new NodeOperationError(
 				context.getNode(),
-				'The field mapping contains an unknown or stale field. Refresh the fields and try again.',
+				`The ${kind} mapping contains an unknown or stale field. Refresh the fields and try again.`,
 				{ itemIndex },
 			);
 		}
-		setSafeObjectProperty(destination.metadata ? metadata : fields, destination.name, value);
+		setSafeObjectProperty(selected, name, value);
 	}
-	return { fields, metadata };
+	return selected;
+}
+
+function getMetadataToggle(
+	context: IExecuteFunctions,
+	itemIndex: number,
+	operation: WordpressWriteMode,
+): boolean {
+	const name = getMetadataToggleName(operation);
+	const value: unknown = context.getNodeParameter(name, itemIndex, false);
+	if (typeof value !== 'boolean') {
+		throw new NodeOperationError(
+			context.getNode(),
+			'The Send Metadata value is invalid. Select a valid value and try again.',
+			{ itemIndex },
+		);
+	}
+	return value;
+}
+
+function getConfiguredMetadataValues(
+	context: IExecuteFunctions,
+	itemIndex: number,
+	operation: WordpressWriteMode,
+): Readonly<Record<string, unknown>> | undefined {
+	const parameter = getMetadataParameterName(operation);
+	const mapper: unknown = context.getNodeParameter(parameter, itemIndex, missingMapperParameter);
+	if (mapper === missingMapperParameter || isUntouchedMapper(mapper)) return undefined;
+	return parseMapperValue(context, itemIndex, parameter, mapper);
 }
 
 function getItemId(context: IExecuteFunctions, itemIndex: number): number {
@@ -220,7 +279,15 @@ export async function executeWrite(
 	for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 		try {
 			const values = getMapperValue(context, itemIndex, mode);
-			const { fields, metadata } = splitMapperValues(context, schema, values, itemIndex);
+			const fields = selectMapperValues(context, schema, values, itemIndex, 'content');
+			const metadataToggle = getMetadataToggle(context, itemIndex, mode);
+			let metadata: Record<string, unknown> = {};
+			if (metadataToggle) {
+				const configuredMetadata = getConfiguredMetadataValues(context, itemIndex, mode);
+				if (configuredMetadata !== undefined) {
+					metadata = selectMapperValues(context, schema, configuredMetadata, itemIndex, 'metadata');
+				}
+			}
 			const body = buildWordpressRequestBody(context.getNode(), schema, mode, {
 				fields,
 				...(Object.keys(metadata).length > 0 ? { metadata } : {}),

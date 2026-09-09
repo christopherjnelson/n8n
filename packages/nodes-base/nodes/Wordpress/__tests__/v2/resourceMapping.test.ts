@@ -5,7 +5,7 @@ import * as PostTypes from '../../v2/helpers/postTypes';
 import type * as PostTypesType from '../../v2/helpers/postTypes';
 import * as Schemas from '../../v2/helpers/schemas';
 import type * as SchemasType from '../../v2/helpers/schemas';
-import { getContentFields } from '../../v2/methods/resourceMapping';
+import { getContentFields, getMetadataFields } from '../../v2/methods/resourceMapping';
 
 vi.mock('../../v2/helpers/postTypes', async () => ({
 	...(await vi.importActual<typeof PostTypesType>('../../v2/helpers/postTypes')),
@@ -98,7 +98,7 @@ describe('WordPress v2 resource mapping', () => {
 			},
 			1,
 		],
-	])('loads %s fields from a realistic OPTIONS metadata schema', async (_name, meta, count) => {
+	])('loads %s metadata from a realistic OPTIONS schema', async (_name, meta, count) => {
 		const payload = {
 			namespace: 'site/v3',
 			methods: ['GET', 'POST'],
@@ -107,14 +107,14 @@ describe('WordPress v2 resource mapping', () => {
 		};
 		getContentSchemaMock.mockResolvedValue(Schemas.parseContentSchema(node, payload, postType));
 
-		const create = await getContentFields.call(context('create'));
-		const update = await getContentFields.call(context('update'));
+		const create = await getMetadataFields.call(context('create'));
+		const update = await getMetadataFields.call(context('update'));
 
 		expect(create.fields).toHaveLength(count);
 		expect(update.fields).toHaveLength(count);
 	});
 
-	it('shows content fields first and hides clearly labeled metadata fields', async () => {
+	it('shows only writable content fields', async () => {
 		const result = await getContentFields.call(context('create'));
 
 		expect(result.fields).toEqual([
@@ -157,28 +157,6 @@ describe('WordPress v2 resource mapping', () => {
 				type: 'object',
 				removed: false,
 			}),
-			expect.objectContaining({
-				id: 'metadata:flag',
-				displayName: 'Metadata: flag',
-				type: 'boolean',
-				removed: true,
-			}),
-			expect.objectContaining({
-				id: 'metadata:label',
-				displayName: 'Metadata: label',
-				type: 'string',
-				removed: true,
-			}),
-			expect.objectContaining({
-				id: 'metadata:count',
-				displayName: 'Metadata: count',
-				type: 'number',
-				required: false,
-				removed: true,
-			}),
-			expect.objectContaining({ id: 'metadata:ratio', type: 'number', removed: true }),
-			expect.objectContaining({ id: 'metadata:items', type: 'array', removed: true }),
-			expect.objectContaining({ id: 'metadata:config', type: 'object', removed: true }),
 		]);
 	});
 
@@ -278,8 +256,8 @@ describe('WordPress v2 resource mapping', () => {
 			],
 		});
 
-		const create = await getContentFields.call(context('create'));
-		const update = await getContentFields.call(context('update'));
+		const create = await getMetadataFields.call(context('create'));
+		const update = await getMetadataFields.call(context('update'));
 
 		expect(create.fields[0]).toMatchObject({
 			id: 'metadata:flag',
@@ -291,5 +269,27 @@ describe('WordPress v2 resource mapping', () => {
 			required: false,
 			removed: true,
 		});
+	});
+
+	it('returns registered metadata with native controls and excludes read-only fields', async () => {
+		const create = await getMetadataFields.call(context('create'));
+
+		expect(create.fields).toEqual([
+			expect.objectContaining({ id: 'metadata:flag', displayName: 'flag', type: 'boolean' }),
+			expect.objectContaining({ id: 'metadata:label', displayName: 'label', type: 'string' }),
+			expect.objectContaining({ id: 'metadata:count', displayName: 'count', type: 'number' }),
+			expect.objectContaining({ id: 'metadata:ratio', displayName: 'ratio', type: 'number' }),
+			expect.objectContaining({ id: 'metadata:items', displayName: 'items', type: 'array' }),
+			expect.objectContaining({ id: 'metadata:config', displayName: 'config', type: 'object' }),
+		]);
+		expect(create.fields.every((field) => field.display)).toBe(true);
+		expect(create.fields.every((field) => field.defaultValue === undefined)).toBe(true);
+	});
+
+	it('returns no metadata fields when discovery is blank', async () => {
+		const loadContext = context('create');
+		loadContext.getCurrentNodeParameter.mockReturnValue('');
+
+		await expect(getMetadataFields.call(loadContext)).resolves.toEqual({ fields: [] });
 	});
 });

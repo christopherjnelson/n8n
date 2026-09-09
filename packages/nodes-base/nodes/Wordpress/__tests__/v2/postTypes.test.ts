@@ -71,7 +71,10 @@ describe('WordPress v2 post type discovery', () => {
 	});
 
 	it('lists post types through a load-options context', async () => {
-		wordpressApiRequestMock.mockResolvedValue({ bs_workflow: workflowType });
+		wordpressApiRequestMock.mockResolvedValue({
+			bs_workflow: workflowType,
+			missing_base: { ...workflowType, slug: 'missing_base', rest_base: false },
+		});
 		const loadContext = {
 			getNode: vi.fn().mockReturnValue(node),
 			getCurrentNodeParameter: vi.fn().mockReturnValue('basicAuth'),
@@ -81,6 +84,57 @@ describe('WordPress v2 post type discovery', () => {
 			results: [{ name: 'Workflows', value: 'bs_workflow' }],
 		});
 		expect(wordpressApiRequestMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('skips post types that do not have a usable REST route', () => {
+		const validPost = {
+			slug: 'post',
+			name: 'Posts',
+			rest_base: 'posts',
+			rest_namespace: 'wp/v2',
+		};
+		const nestedCustom = {
+			...workflowType,
+			rest_base: 'content/workflows',
+			rest_namespace: 'publisher/v3',
+		};
+
+		expect(
+			parsePostTypeCollection(node, {
+				post: validPost,
+				bs_workflow: workflowType,
+				nested: { ...nestedCustom, slug: 'nested', name: 'Nested' },
+				missing: { ...workflowType, slug: 'missing', rest_base: undefined },
+				false_base: { ...workflowType, slug: 'false_base', rest_base: false },
+				null_base: { ...workflowType, slug: 'null_base', rest_base: null },
+				empty_base: { ...workflowType, slug: 'empty_base', rest_base: '' },
+				unsafe_base: { ...workflowType, slug: 'unsafe_base', rest_base: 'https://example.com' },
+				missing_namespace: { ...workflowType, slug: 'missing_namespace', rest_namespace: null },
+				empty_namespace: { ...workflowType, slug: 'empty_namespace', rest_namespace: '' },
+				unsafe_namespace: {
+					...workflowType,
+					slug: 'unsafe_namespace',
+					rest_namespace: '../wp/v2',
+				},
+			}),
+		).toEqual([
+			{ slug: 'post', name: 'Posts', restBase: 'posts', restNamespace: 'wp/v2' },
+			{ slug: 'bs_workflow', name: 'Workflows', restBase: 'workflows', restNamespace: 'wp/v2' },
+			{
+				slug: 'nested',
+				name: 'Nested',
+				restBase: 'content/workflows',
+				restNamespace: 'publisher/v3',
+			},
+		]);
+	});
+
+	it('returns no results when no post type has a usable REST route', () => {
+		expect(
+			parsePostTypeCollection(node, {
+				post: { ...workflowType, slug: 'post', rest_base: false },
+			}),
+		).toEqual([]);
 	});
 
 	it('makes one detail request for one resolver call', async () => {
@@ -94,6 +148,7 @@ describe('WordPress v2 post type discovery', () => {
 	it.each([
 		['an array', []],
 		['a missing field', { slug: 'post', name: 'Posts', rest_base: 'posts' }],
+		['an invalid REST base', { ...workflowType, rest_base: false }],
 		['an invalid route', { ...workflowType, rest_namespace: 'https://evil.example' }],
 	])('rejects malformed detail data with %s', async (_label, response) => {
 		wordpressApiRequestMock.mockResolvedValue(response);

@@ -41,8 +41,9 @@ export const versionDescription: INodeTypeDescription = {
 		{
 			displayName: 'Resource',
 			name: 'resource',
-			type: 'hidden',
+			type: 'options',
 			noDataExpression: true,
+			options: [{ name: 'Content', value: 'post' }],
 			default: 'post',
 		},
 		{

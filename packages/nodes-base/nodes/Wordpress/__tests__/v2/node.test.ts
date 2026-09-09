@@ -196,7 +196,12 @@ describe('WordPress v2 node', () => {
 			},
 		]);
 		const resource = description.properties.find((property) => property.name === 'resource');
-		expect(resource).toMatchObject({ type: 'hidden', default: 'post' });
+		expect(resource).toMatchObject({
+			type: 'options',
+			default: 'post',
+			options: [{ name: 'Content', value: 'post' }],
+		});
+		expect(operation?.displayOptions).toEqual({ show: { resource: ['post'] } });
 		const postType = description.properties.find((property) => property.name === 'postType');
 		expect(postType?.displayName).toBe('Post Type');
 		expect(postType?.modes).toEqual(

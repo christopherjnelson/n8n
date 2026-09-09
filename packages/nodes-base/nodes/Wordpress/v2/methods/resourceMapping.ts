@@ -28,9 +28,10 @@ function toMapperField(property: WordpressContentProperty, required: boolean): R
 }
 
 async function getSchema(this: ILoadOptionsFunctions) {
-	const slug: unknown = this.getNodeParameter('postType', undefined, { extractValue: true });
-	if (typeof slug !== 'string' || slug.length === 0) {
-		throw new NodeOperationError(this.getNode(), 'Select a post type and try again.');
+	const slug: unknown = this.getCurrentNodeParameter('postType', { extractValue: true });
+	if (slug === undefined || slug === null || slug === '') return undefined;
+	if (typeof slug !== 'string') {
+		throw new NodeOperationError(this.getNode(), 'Select a valid post type and try again.');
 	}
 	const postType = await resolvePostType.call(this, slug);
 	const schema = await getContentSchema.call(this, postType);
@@ -44,11 +45,12 @@ async function getSchema(this: ILoadOptionsFunctions) {
 }
 
 function isCreateOperation(context: ILoadOptionsFunctions): boolean {
-	return context.getNodeParameter('operation') === 'create';
+	return context.getCurrentNodeParameter('operation') === 'create';
 }
 
 export async function getContentFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
 	const schema = await getSchema.call(this);
+	if (schema === undefined) return { fields: [] };
 	const fields = schema.writableProperties
 		.filter((property) => property.name !== 'meta' && !property.readOnly)
 		.map((property) => toMapperField(property, isCreateOperation(this) && property.required));
@@ -59,6 +61,7 @@ export async function getMetadataFields(
 	this: ILoadOptionsFunctions,
 ): Promise<ResourceMapperFields> {
 	const schema = await getSchema.call(this);
+	if (schema === undefined) return { fields: [] };
 	const metaRequired = schema.writableProperties.find(
 		(property) => property.name === 'meta',
 	)?.required;

@@ -21,13 +21,17 @@ const getContentSchemaMock = Schemas.getContentSchema as Mock;
 const node = { name: 'WordPress' } as INode;
 const postType = { slug: 'custom', name: 'Custom', restNamespace: 'site/v3', restBase: 'things' };
 
-function context(operation: 'create' | 'update'): ILoadOptionsFunctions {
+type TestLoadContext = ILoadOptionsFunctions & {
+	getCurrentNodeParameter: Mock<ILoadOptionsFunctions['getCurrentNodeParameter']>;
+};
+
+function context(operation: 'create' | 'update'): TestLoadContext {
 	return {
 		getNode: vi.fn().mockReturnValue(node),
-		getNodeParameter: vi
+		getCurrentNodeParameter: vi
 			.fn()
 			.mockImplementation((name: string) => (name === 'postType' ? 'custom' : operation)),
-	} as unknown as ILoadOptionsFunctions;
+	} as unknown as TestLoadContext;
 }
 
 describe('WordPress v2 resource mapping', () => {
@@ -56,6 +60,29 @@ describe('WordPress v2 resource mapping', () => {
 				{ name: 'internal', type: 'string', nullable: false, readOnly: true, required: false },
 			],
 		});
+	});
+
+	it('returns empty fields while the post type selection is blank', async () => {
+		const loadContext = context('create');
+		loadContext.getCurrentNodeParameter.mockReturnValue('');
+
+		await expect(getContentFields.call(loadContext)).resolves.toEqual({ fields: [] });
+		await expect(getMetadataFields.call(loadContext)).resolves.toEqual({ fields: [] });
+		expect(resolvePostTypeMock).not.toHaveBeenCalled();
+		expect(getContentSchemaMock).not.toHaveBeenCalled();
+	});
+
+	it('reads the current post type selection and loads its fields', async () => {
+		const loadContext = context('create');
+
+		await getContentFields.call(loadContext);
+
+		expect(loadContext.getCurrentNodeParameter.mock.calls).toContainEqual([
+			'postType',
+			{ extractValue: true },
+		]);
+		expect(resolvePostTypeMock).toHaveBeenCalledWith('custom');
+		expect(getContentSchemaMock).toHaveBeenCalledWith(postType);
 	});
 
 	it('maps writable POST arguments without a hardcoded title or meta container', async () => {

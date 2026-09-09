@@ -3,6 +3,7 @@ import { NodeOperationError } from 'n8n-workflow';
 import type { Mock } from 'vitest';
 
 import { getPostTypes, parsePostTypeCollection, resolvePostType } from '../../v2/helpers/postTypes';
+import { searchPostTypes } from '../../v2/methods/listSearch';
 import * as Transport from '../../v2/transport';
 import type * as TransportType from '../../v2/transport';
 
@@ -67,6 +68,19 @@ describe('WordPress v2 post type discovery', () => {
 			undefined,
 			{ context: 'edit' },
 		);
+	});
+
+	it('lists post types through a load-options context', async () => {
+		wordpressApiRequestMock.mockResolvedValue({ bs_workflow: workflowType });
+		const loadContext = {
+			getNode: vi.fn().mockReturnValue(node),
+			getCurrentNodeParameter: vi.fn().mockReturnValue('basicAuth'),
+		} as unknown as ILoadOptionsFunctions;
+
+		await expect(searchPostTypes.call(loadContext)).resolves.toEqual({
+			results: [{ name: 'Workflows', value: 'bs_workflow' }],
+		});
+		expect(wordpressApiRequestMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('makes one detail request for one resolver call', async () => {

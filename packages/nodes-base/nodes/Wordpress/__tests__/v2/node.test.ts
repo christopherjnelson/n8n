@@ -161,6 +161,7 @@ describe('WordPress v2 node', () => {
 
 	it('shows authentication, resource, post type, and operations in order', () => {
 		const description = new Wordpress().getNodeType(2).description;
+		expect(description.subtitle).toBe('={{ $parameter["postType"].value }}');
 		expect(description.credentials).toEqual([
 			expect.objectContaining({ name: 'wordpressApi' }),
 			expect.objectContaining({ name: 'wordpressOAuth2Api' }),
@@ -172,28 +173,30 @@ describe('WordPress v2 node', () => {
 			{
 				name: 'Create',
 				value: 'create',
-				action: 'Create an item',
-				description: 'Create an item in the selected post type',
+				action: 'Create content',
+				description: 'Create content in the selected post type',
 			},
 			{
 				name: 'Get',
 				value: 'get',
-				action: 'Get an item',
-				description: 'Get one item by ID',
+				action: 'Get content',
+				description: 'Get content by ID from the selected post type',
 			},
 			{
 				name: 'Get Many',
 				value: 'getMany',
-				action: 'Get many items',
-				description: 'Get items from the selected post type',
+				action: 'Get many content items',
+				description: 'Get content items from the selected post type',
 			},
 			{
 				name: 'Update',
 				value: 'update',
-				action: 'Update an item',
-				description: 'Update an item in the selected post type',
+				action: 'Update content',
+				description: 'Update content in the selected post type',
 			},
 		]);
+		const resource = description.properties.find((property) => property.name === 'resource');
+		expect(resource).toMatchObject({ type: 'hidden', default: 'post' });
 		const postType = description.properties.find((property) => property.name === 'postType');
 		expect(postType?.displayName).toBe('Post Type');
 		expect(postType?.modes).toEqual(

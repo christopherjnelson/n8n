@@ -9,7 +9,7 @@ export const versionDescription: INodeTypeDescription = {
 	icon: 'file:wordpress.svg',
 	group: ['output'],
 	version: 2,
-	subtitle: '={{ $parameter["operation"] + ": " + $parameter["resource"] }}',
+	subtitle: '={{ $parameter["postType"].value }}',
 	description: 'Consume the WordPress API',
 	defaults: { name: 'WordPress' },
 	inputs: [NodeConnectionTypes.Main],
@@ -41,9 +41,8 @@ export const versionDescription: INodeTypeDescription = {
 		{
 			displayName: 'Resource',
 			name: 'resource',
-			type: 'options',
+			type: 'hidden',
 			noDataExpression: true,
-			options: [{ name: 'Post', value: 'post' }],
 			default: 'post',
 		},
 		{

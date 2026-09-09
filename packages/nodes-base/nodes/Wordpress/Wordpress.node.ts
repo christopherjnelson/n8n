@@ -2,6 +2,7 @@ import type { INodeTypeBaseDescription, IVersionedNodeType } from 'n8n-workflow'
 import { VersionedNodeType } from 'n8n-workflow';
 
 import { WordpressV1 } from './v1/WordpressV1.node';
+import { WordpressV2 } from './v2/WordpressV2.node';
 
 export class Wordpress extends VersionedNodeType {
 	constructor() {
@@ -18,6 +19,7 @@ export class Wordpress extends VersionedNodeType {
 
 		const nodeVersions: IVersionedNodeType['nodeVersions'] = {
 			1: new WordpressV1(baseDescription),
+			2: new WordpressV2(baseDescription),
 		};
 
 		super(nodeVersions, baseDescription);

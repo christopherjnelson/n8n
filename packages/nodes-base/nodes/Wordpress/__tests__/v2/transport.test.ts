@@ -1,7 +1,7 @@
 import type { IExecuteFunctions, INode } from 'n8n-workflow';
 import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
-import { wordpressApiRequest } from '../../v2/transport';
+import { wordpressApiRequest, wordpressApiRequestWithResponse } from '../../v2/transport';
 
 type AuthType = 'basicAuth' | 'oAuth2';
 
@@ -62,6 +62,66 @@ describe('WordPress v2 transport', () => {
 				uri: 'https://wordpress.example/subdirectory/wp-json/acme/v1/content/workflows',
 			}),
 		);
+	});
+
+	it('requests a full response from a discovered collection route', async () => {
+		const { context, requestWithAuthentication } = createContext();
+		const headers: Record<string, string> = {};
+		headers['x-wp-totalpages'] = '1';
+		requestWithAuthentication.mockResolvedValueOnce({
+			body: [{ id: 1 }],
+			headers,
+		});
+
+		await expect(
+			wordpressApiRequestWithResponse.call(
+				context,
+				'GET',
+				{ namespace: 'publisher/v3', base: 'library/items' },
+				{ page: 1, per_page: 100 },
+			),
+		).resolves.toMatchObject({ body: [{ id: 1 }] });
+		expect(requestWithAuthentication).toHaveBeenCalledWith(
+			'wordpressApi',
+			expect.objectContaining({
+				uri: 'https://wordpress.example/subdirectory/wp-json/publisher/v3/library/items',
+				qs: { page: 1, per_page: 100 },
+				resolveWithFullResponse: true,
+			}),
+		);
+	});
+
+	it('requests a full response from a WordPress.com collection route', async () => {
+		const { context, requestWithAuthentication } = createContext('oAuth2');
+		requestWithAuthentication.mockResolvedValueOnce({ body: [], headers: {} });
+
+		await wordpressApiRequestWithResponse.call(
+			context,
+			'GET',
+			{ namespace: 'wp/v2', base: 'workflows' },
+			{ page: 1, per_page: 100 },
+		);
+
+		expect(requestWithAuthentication).toHaveBeenCalledWith(
+			'wordpressOAuth2Api',
+			expect.objectContaining({
+				uri: 'https://public-api.wordpress.com/wp/v2/sites/myblog.wordpress.com/workflows',
+				qs: { page: 1, per_page: 100 },
+				resolveWithFullResponse: true,
+			}),
+		);
+	});
+
+	it('rejects a custom full-response namespace on WordPress.com', async () => {
+		const { context, requestWithAuthentication } = createContext('oAuth2');
+
+		await expect(
+			wordpressApiRequestWithResponse.call(context, 'GET', {
+				namespace: 'publisher/v3',
+				base: 'library/items',
+			}),
+		).rejects.toThrow(/can't use this REST namespace/);
+		expect(requestWithAuthentication).not.toHaveBeenCalled();
 	});
 
 	it('passes query parameters through with query-string encoding enabled', async () => {

@@ -4,6 +4,7 @@ import type { Mock } from 'vitest';
 import * as GenericFunctions from '../v1/GenericFunctions';
 import type * as GenericFunctionsType from '../v1/GenericFunctions';
 import { WordpressV1 } from '../v1/WordpressV1.node';
+import { WordpressV2 } from '../v2/WordpressV2.node';
 import { Wordpress } from '../Wordpress.node';
 
 vi.mock('../v1/GenericFunctions', async () => ({
@@ -58,7 +59,7 @@ describe('Wordpress node v1', () => {
 	it('registers and resolves version 1', () => {
 		const wordpress = new Wordpress();
 
-		expect(Object.keys(wordpress.nodeVersions)).toEqual(['1']);
+		expect(Object.keys(wordpress.nodeVersions)).toEqual(['1', '2']);
 		expect(wordpress.description).toMatchObject({
 			displayName: 'Wordpress',
 			name: 'wordpress',
@@ -70,6 +71,7 @@ describe('Wordpress node v1', () => {
 			usableAsTool: true,
 		});
 		expect(wordpress.nodeVersions[1]).toBeInstanceOf(WordpressV1);
+		expect(wordpress.nodeVersions[2]).toBeInstanceOf(WordpressV2);
 		expect(wordpress.getNodeType()).toBe(wordpress.nodeVersions[1]);
 		expect(wordpress.getNodeType(1)).toBe(wordpress.nodeVersions[1]);
 	});

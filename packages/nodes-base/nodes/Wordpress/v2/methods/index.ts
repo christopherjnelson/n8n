@@ -1,0 +1,1 @@
+export { searchPostTypes } from './listSearch';

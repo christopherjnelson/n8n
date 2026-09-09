@@ -185,7 +185,7 @@ describe('WordPress v2 node', () => {
 
 	it('shows v2 parameters and keeps write mapper state independent', () => {
 		const description = new Wordpress().getNodeType(2).description;
-		expect(description.subtitle).toBe('={{ $parameter["postType"].value }}');
+		expect(description.subtitle).toContain('$parameter["resource"] === "post"');
 		expect(description.credentials).toEqual([
 			expect.objectContaining({ name: 'wordpressApi' }),
 			expect.objectContaining({ name: 'wordpressOAuth2Api' }),
@@ -223,7 +223,10 @@ describe('WordPress v2 node', () => {
 		expect(resource).toMatchObject({
 			type: 'options',
 			default: 'post',
-			options: [{ name: 'Content', value: 'post' }],
+			options: [
+				{ name: 'Content', value: 'post' },
+				{ name: 'User', value: 'user' },
+			],
 		});
 		expect(operation?.displayOptions).toEqual({ show: { resource: ['post'] } });
 		const postType = description.properties.find((property) => property.name === 'postType');
@@ -323,6 +326,223 @@ describe('WordPress v2 node', () => {
 				].map((property) => property?.name),
 			),
 		).toHaveProperty('size', 6);
+	});
+
+	it('shows the four compatible User actions without Content discovery fields', () => {
+		const description = new Wordpress().getNodeType(2).description;
+		const operations = description.properties.filter(
+			(property) =>
+				property.name === 'operation' && property.displayOptions?.show?.resource?.includes('user'),
+		);
+		expect(operations).toHaveLength(1);
+		expect(operations[0]?.options).toEqual([
+			expect.objectContaining({ name: 'Create', value: 'create' }),
+			expect.objectContaining({ name: 'Get', value: 'get' }),
+			expect.objectContaining({ name: 'Get Many', value: 'getAll' }),
+			expect.objectContaining({ name: 'Update', value: 'update' }),
+		]);
+		expect(JSON.stringify(operations[0]?.options)).not.toContain('delete');
+		const postType = description.properties.find((property) => property.name === 'postType');
+		expect(postType?.displayOptions).toEqual({ show: { resource: ['post'] } });
+		const userFieldNames = description.properties
+			.filter((property) => property.displayOptions?.show?.resource?.includes('user'))
+			.map((property) => property.name);
+		expect(userFieldNames).toEqual(
+			expect.arrayContaining(['username', 'name', 'firstName', 'lastName', 'email', 'password']),
+		);
+		expect(userFieldNames).not.toContain('postType');
+		expect(userFieldNames).not.toContain('reassign');
+	});
+
+	it('creates a User with the v1 field names and v2 transport', async () => {
+		requestMock.mockResolvedValue({ id: 7 });
+		const context = createContext([
+			{
+				resource: 'user',
+				operation: 'create',
+				username: 'ada',
+				name: 'Ada',
+				firstName: 'Ada',
+				lastName: 'Lovelace',
+				email: 'ada@example.com',
+				password: 'secret',
+				additionalFields: { url: 'https://example.com', nickname: 'countess' },
+			},
+		]);
+
+		await expect(executeV2(context)).resolves.toEqual([
+			[{ json: { id: 7 }, pairedItem: { item: 0 } }],
+		]);
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'wp/v2', base: 'users' },
+			{
+				username: 'ada',
+				name: 'Ada',
+				first_name: 'Ada',
+				last_name: 'Lovelace',
+				email: 'ada@example.com',
+				password: 'secret',
+				url: 'https://example.com',
+				nickname: 'countess',
+			},
+		);
+		expect(resolvePostTypeMock).not.toHaveBeenCalled();
+		expect(getContentSchemaMock).not.toHaveBeenCalled();
+	});
+
+	it('gets and updates Users by ID', async () => {
+		requestMock.mockResolvedValueOnce({ id: 8 }).mockResolvedValueOnce({ id: 8, name: 'New' });
+		const getContext = createContext([
+			{ resource: 'user', operation: 'get', userId: '8', options: { context: 'edit' } },
+		]);
+		const updateContext = createContext([
+			{
+				resource: 'user',
+				operation: 'update',
+				userId: '8',
+				updateFields: { name: 'New', firstName: 'Grace' },
+			},
+		]);
+
+		await executeV2(getContext);
+		await executeV2(updateContext);
+
+		expect(requestMock).toHaveBeenNthCalledWith(
+			1,
+			'GET',
+			{ namespace: 'wp/v2', base: 'users', suffix: [8] },
+			undefined,
+			{ context: 'edit' },
+		);
+		expect(requestMock).toHaveBeenNthCalledWith(
+			2,
+			'POST',
+			{ namespace: 'wp/v2', base: 'users', suffix: [8] },
+			{ id: 8, name: 'New', first_name: 'Grace' },
+		);
+	});
+
+	it('gets a limited User collection with the stored getAll operation', async () => {
+		requestMock.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+		const context = createContext([
+			{
+				resource: 'user',
+				operation: 'getAll',
+				returnAll: false,
+				limit: 2,
+				options: { context: 'view', orderBy: 'email', order: 'asc', search: 'ada', who: 'authors' },
+			},
+		]);
+
+		const result = await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'GET',
+			{ namespace: 'wp/v2', base: 'users' },
+			undefined,
+			{
+				context: 'view',
+				orderby: 'email',
+				order: 'asc',
+				search: 'ada',
+				who: 'authors',
+				per_page: 2,
+			},
+		);
+		expect(result[0]).toEqual([
+			{ json: { id: 1 }, pairedItem: { item: 0 } },
+			{ json: { id: 2 }, pairedItem: { item: 0 } },
+		]);
+		expect(resolvePostTypeMock).not.toHaveBeenCalled();
+		expect(getContentSchemaMock).not.toHaveBeenCalled();
+		expect(context.getNodeParameter).not.toHaveBeenCalledWith('userId', expect.anything());
+	});
+
+	it('paginates all Users and keeps per-item errors paired', async () => {
+		requestWithResponseMock
+			.mockResolvedValueOnce({ body: [{ id: 1 }], headers: paginationHeaders('2', true) })
+			.mockResolvedValueOnce({ body: [{ id: 2 }], headers: paginationHeaders('2') });
+		const allContext = createContext([
+			{ resource: 'user', operation: 'getAll', returnAll: true, options: {} },
+		]);
+
+		await expect(executeV2(allContext)).resolves.toEqual([
+			[
+				{ json: { id: 1 }, pairedItem: { item: 0 } },
+				{ json: { id: 2 }, pairedItem: { item: 0 } },
+			],
+		]);
+		expect(requestWithResponseMock).toHaveBeenNthCalledWith(
+			1,
+			'GET',
+			{ namespace: 'wp/v2', base: 'users' },
+			{ per_page: 10, page: 1 },
+		);
+		expect(requestWithResponseMock).toHaveBeenNthCalledWith(
+			2,
+			'GET',
+			{ namespace: 'wp/v2', base: 'users' },
+			{ per_page: 10, page: 2 },
+		);
+
+		requestMock
+			.mockReset()
+			.mockRejectedValueOnce(new Error('Denied'))
+			.mockResolvedValueOnce({ id: 3 });
+		const continueContext = createContext(
+			[
+				{ resource: 'user', operation: 'get', userId: '2', options: {} },
+				{ userId: '3', options: {} },
+			],
+			true,
+		);
+		const result = await executeV2(continueContext);
+		expect(result[0]).toEqual([
+			{ json: { error: 'Denied' }, pairedItem: { item: 0 } },
+			{ json: { id: 3 }, pairedItem: { item: 1 } },
+		]);
+	});
+
+	it.each([
+		[{ body: [], headers: {} }, /didn't return the total page count/],
+		[{ body: [], headers: paginationHeaders('many') }, /invalid total page count/],
+		[{ body: [], headers: paginationHeaders('10001') }, /too many user pages/],
+		[{ body: [], headers: [] }, /invalid pagination headers/],
+		[{ body: [], headers: paginationHeaders('2') }, /empty user page/],
+	])('rejects unsafe User pagination metadata', async (response, message) => {
+		requestWithResponseMock.mockResolvedValue(response);
+		const context = createContext([
+			{ resource: 'user', operation: 'getAll', returnAll: true, options: {} },
+		]);
+
+		await expect(executeV2(context)).rejects.toThrow(message);
+		expect(requestWithResponseMock).toHaveBeenCalledTimes(1);
+		expect(context.getNodeParameter).not.toHaveBeenCalledWith('userId', expect.anything());
+	});
+
+	it.each([
+		['Return All', { returnAll: 'yes', limit: 1 }, /Return All value isn't valid/],
+		['fractional limit', { returnAll: false, limit: 1.5 }, /limit isn't valid/],
+		['limit below range', { returnAll: false, limit: 0 }, /limit isn't valid/],
+		['limit above range', { returnAll: false, limit: 11 }, /limit isn't valid/],
+	])('rejects an invalid User %s before requesting data', async (_name, values, message) => {
+		const context = createContext([
+			{ resource: 'user', operation: 'getAll', options: {}, ...values },
+		]);
+
+		await expect(executeV2(context)).rejects.toThrow(message);
+		expect(requestMock).not.toHaveBeenCalled();
+		expect(requestWithResponseMock).not.toHaveBeenCalled();
+	});
+
+	it('reports an invalid single User response as an invalid user', async () => {
+		requestMock.mockResolvedValue([]);
+		const context = createContext([
+			{ resource: 'user', operation: 'get', userId: '8', options: {} },
+		]);
+
+		await expect(executeV2(context)).rejects.toThrow(/invalid user\./);
 	});
 
 	it('sends resolved Resource Mapper arrays and objects as native values', async () => {

@@ -2,6 +2,7 @@
 import { NodeConnectionTypes, type INodeTypeDescription } from 'n8n-workflow';
 
 import * as post from './post';
+import * as user from './user';
 
 export const versionDescription: INodeTypeDescription = {
 	displayName: 'WordPress',
@@ -9,7 +10,8 @@ export const versionDescription: INodeTypeDescription = {
 	icon: 'file:wordpress.svg',
 	group: ['output'],
 	version: 2,
-	subtitle: '={{ $parameter["postType"].value }}',
+	subtitle:
+		'={{ $parameter["resource"] === "post" ? $parameter["postType"].value : $parameter["operation"] + ": " + $parameter["resource"] }}',
 	description: 'Consume the WordPress API',
 	defaults: { name: 'WordPress' },
 	inputs: [NodeConnectionTypes.Main],
@@ -43,7 +45,10 @@ export const versionDescription: INodeTypeDescription = {
 			name: 'resource',
 			type: 'options',
 			noDataExpression: true,
-			options: [{ name: 'Content', value: 'post' }],
+			options: [
+				{ name: 'Content', value: 'post' },
+				{ name: 'User', value: 'user' },
+			],
 			default: 'post',
 		},
 		{
@@ -81,5 +86,6 @@ export const versionDescription: INodeTypeDescription = {
 			],
 		},
 		...post.description,
+		...user.description,
 	],
 };

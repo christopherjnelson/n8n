@@ -20,10 +20,13 @@ const postType = {
 	restBase: 'library/items',
 	restNamespace: 'publisher/v3',
 };
-const options = (properties: unknown = {}, extraSchema = {}) => ({
+const options = (properties: unknown = {}, extraSchema = {}, postArgs: unknown = properties) => ({
 	namespace: 'publisher/v3',
 	methods: ['GET', 'POST'],
-	endpoints: [{ methods: ['GET'] }, { methods: ['POST'] }],
+	endpoints: [
+		{ methods: ['GET'], args: { context: { type: 'string' } } },
+		{ methods: ['POST'], args: postArgs },
+	],
 	schema: { type: 'object', properties, ...extraSchema },
 });
 
@@ -40,26 +43,60 @@ describe('WordPress v2 content schema discovery', () => {
 		});
 	});
 
-	it('does not add a title property and reports route capabilities', () => {
-		expect(parseContentSchema(node, options({ content: { type: 'string' } }), postType)).toEqual({
+	it('uses POST arguments as writable properties and reports route capabilities', () => {
+		expect(
+			parseContentSchema(
+				node,
+				options({ title: { type: 'object' } }, {}, { title: { type: 'string' } }),
+				postType,
+			),
+		).toEqual({
 			canCreate: true,
 			canRead: true,
-			properties: [
+			writableProperties: [
 				{
-					name: 'content',
+					name: 'title',
 					type: 'string',
 					nullable: false,
 					readOnly: false,
 					required: false,
 				},
 			],
-			metadata: [],
+			writableMetadata: [],
+		});
+	});
+
+	it('does not use GET arguments as writable properties', () => {
+		const result = parseContentSchema(
+			node,
+			{
+				...options(),
+				endpoints: [
+					{ methods: ['GET'], args: { context: { type: 'string' } } },
+					{ methods: ['POST'], args: { content: { type: 'string' } } },
+				],
+			},
+			postType,
+		);
+		expect(result.writableProperties.map(({ name }) => name)).toEqual(['content']);
+	});
+
+	it('returns no writable fields when the route has no POST endpoint', () => {
+		const result = parseContentSchema(
+			node,
+			{ ...options(), endpoints: [{ methods: ['GET'], args: {} }] },
+			postType,
+		);
+		expect(result).toMatchObject({
+			canCreate: false,
+			writableProperties: [],
+			writableMetadata: [],
 		});
 	});
 
 	it('returns no metadata when meta has no registered properties', () => {
 		expect(
-			parseContentSchema(node, options({ meta: { type: 'object' } }), postType).metadata,
+			parseContentSchema(node, options({ meta: { type: 'object' } }), postType).writableMetadata,
 		).toEqual([]);
 	});
 
@@ -73,7 +110,9 @@ describe('WordPress v2 content schema discovery', () => {
 			options({ meta: { type: 'object', properties: metaProperties } }),
 			postType,
 		);
-		expect(result.metadata.map(({ name, type, nullable }) => ({ name, type, nullable }))).toEqual([
+		expect(
+			result.writableMetadata.map(({ name, type, nullable }) => ({ name, type, nullable })),
+		).toEqual([
 			...['string', 'boolean', 'integer', 'number', 'array', 'object'].map((type) => ({
 				name: type,
 				type,
@@ -83,21 +122,28 @@ describe('WordPress v2 content schema discovery', () => {
 		]);
 	});
 
-	it('combines top-level and property-level required flags and preserves read-only flags', () => {
+	it('preserves POST argument required, nullable, description, and read-only flags', () => {
 		const result = parseContentSchema(
 			node,
 			options(
+				{ id: { type: 'integer' }, content: { type: 'object' } },
+				{},
 				{
-					id: { type: 'integer', readonly: true },
-					content: { type: 'string', required: true, description: 'Body' },
+					id: { type: 'integer', readonly: true, required: true },
+					content: { type: ['string', 'null'], required: true, description: 'Body' },
 				},
-				{ required: ['id'] },
 			),
 			postType,
 		);
-		expect(result.properties).toMatchObject([
+		expect(result.writableProperties).toMatchObject([
 			{ name: 'id', required: true, readOnly: true },
-			{ name: 'content', required: true, readOnly: false, description: 'Body' },
+			{
+				name: 'content',
+				required: true,
+				readOnly: false,
+				nullable: true,
+				description: 'Body',
+			},
 		]);
 	});
 
@@ -116,7 +162,7 @@ describe('WordPress v2 content schema discovery', () => {
 			}),
 			postType,
 		);
-		expect(result.metadata).toMatchObject([
+		expect(result.writableMetadata).toMatchObject([
 			{ name: 'external_id', required: true, readOnly: true },
 			{ name: 'priority', required: true, readOnly: false },
 		]);
@@ -129,9 +175,11 @@ describe('WordPress v2 content schema discovery', () => {
 		['a namespace mismatch', { ...options(), namespace: 'other/v1' }],
 		['malformed methods', { ...options(), methods: 'GET' }],
 		['malformed endpoints', { ...options(), endpoints: [{}] }],
-		['malformed properties', options([])],
-		['a malformed property record', options({ content: null })],
-		['a missing core property type', options({ content: {} })],
+		['malformed properties', options([], {}, {})],
+		['malformed POST arguments', options({}, {}, [])],
+		['a malformed resource property record', options({ content: null }, {}, {})],
+		['a malformed POST argument record', options({}, {}, { content: null })],
+		['a missing POST argument type', options({}, {}, { content: {} })],
 		['a missing metadata type', options({ meta: { type: 'object', properties: { field: {} } } })],
 		['a non-object metadata container', options({ meta: { type: 'string', properties: {} } })],
 		[
@@ -147,6 +195,32 @@ describe('WordPress v2 content schema discovery', () => {
 	])('rejects %s with an actionable error', (_label, payload) => {
 		expect(() => parseContentSchema(node, payload, postType)).toThrow(NodeOperationError);
 		expect(() => parseContentSchema(node, payload, postType)).toThrow(/Check .* and try again/);
+	});
+
+	it('accepts matching POST schemas in a different property order', () => {
+		const result = parseContentSchema(
+			node,
+			{
+				...options(),
+				endpoints: [
+					{ methods: ['POST'], args: { title: { type: 'string' }, count: { type: 'integer' } } },
+					{ methods: ['POST'], args: { count: { type: 'integer' }, title: { type: 'string' } } },
+				],
+			},
+			postType,
+		);
+		expect(result.writableProperties).toHaveLength(2);
+	});
+
+	it('rejects conflicting POST endpoint argument schemas', () => {
+		const payload = {
+			...options(),
+			endpoints: [
+				{ methods: ['POST'], args: { title: { type: 'string' } } },
+				{ methods: ['POST'], args: { title: { type: 'object' } } },
+			],
+		};
+		expect(() => parseContentSchema(node, payload, postType)).toThrow(/conflicting POST/);
 	});
 
 	it.each(['__proto__', 'constructor', 'prototype'])(

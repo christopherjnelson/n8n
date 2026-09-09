@@ -33,8 +33,8 @@ export type WordpressMetadataProperty = WordpressContentProperty;
 export type WordpressContentSchema = {
 	canCreate: boolean;
 	canRead: boolean;
-	properties: WordpressContentProperty[];
-	metadata: WordpressMetadataProperty[];
+	writableProperties: WordpressContentProperty[];
+	writableMetadata: WordpressMetadataProperty[];
 };
 
 const supportedTypes: readonly WordpressSchemaValueType[] = [
@@ -54,6 +54,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((entry: unknown) => typeof entry === 'string');
+}
+
 function schemaError(node: INode, detail: string): NodeOperationError {
 	return new NodeOperationError(
 		node,
@@ -63,7 +67,7 @@ function schemaError(node: INode, detail: string): NodeOperationError {
 
 function parseRequired(node: INode, value: unknown): Set<string> {
 	if (value === undefined) return new Set();
-	if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+	if (!isStringArray(value)) {
 		throw schemaError(node, 'an invalid required-property list');
 	}
 	for (const name of value) {
@@ -76,8 +80,8 @@ function parseType(
 	node: INode,
 	value: unknown,
 ): { type: WordpressSchemaValueType; nullable: boolean } {
-	const values = Array.isArray(value) ? value : [value];
-	if (values.length === 0 || values.some((entry) => typeof entry !== 'string')) {
+	const values: unknown[] = Array.isArray(value) ? value : [value];
+	if (values.length === 0 || !isStringArray(values)) {
 		throw schemaError(node, 'a schema property with a missing or invalid type');
 	}
 	const nullable = values.includes('null');
@@ -152,8 +156,31 @@ function parseMetadata(
 	);
 }
 
+type WritableSchema = Pick<WordpressContentSchema, 'writableProperties' | 'writableMetadata'>;
+
+function parseWritableSchema(node: INode, args: unknown): WritableSchema {
+	if (!isRecord(args)) throw schemaError(node, 'a POST endpoint with invalid arguments');
+	const writableProperties = parseProperties(node, args, new Set());
+
+	return {
+		writableProperties,
+		writableMetadata: parseMetadata(node, args),
+	};
+}
+
+function writableSchemasMatch(left: WritableSchema, right: WritableSchema): boolean {
+	const sortProperties = (properties: WordpressContentProperty[]) =>
+		[...properties].sort((a, b) => a.name.localeCompare(b.name));
+	return (
+		JSON.stringify(sortProperties(left.writableProperties)) ===
+			JSON.stringify(sortProperties(right.writableProperties)) &&
+		JSON.stringify(sortProperties(left.writableMetadata)) ===
+			JSON.stringify(sortProperties(right.writableMetadata))
+	);
+}
+
 function parseMethods(node: INode, value: unknown, field: string): string[] {
-	if (!Array.isArray(value) || value.some((method) => typeof method !== 'string')) {
+	if (!isStringArray(value)) {
 		throw schemaError(node, `an invalid ${field}`);
 	}
 	return value;
@@ -170,24 +197,36 @@ export function parseContentSchema(
 	}
 	const methods = parseMethods(node, payload.methods, 'route method list');
 	if (!Array.isArray(payload.endpoints)) throw schemaError(node, 'an invalid endpoint list');
-	const endpointMethods = payload.endpoints.flatMap((endpoint) => {
+	const endpointMethods: string[] = [];
+	const postSchemas: WritableSchema[] = [];
+	for (const endpoint of payload.endpoints) {
 		if (!isRecord(endpoint)) throw schemaError(node, 'an invalid endpoint record');
-		return parseMethods(node, endpoint.methods, 'endpoint method list');
-	});
+		const methods = parseMethods(node, endpoint.methods, 'endpoint method list');
+		for (const method of methods) endpointMethods.push(method);
+		if (methods.includes('POST')) postSchemas.push(parseWritableSchema(node, endpoint.args));
+	}
 	if (!isRecord(payload.schema)) throw schemaError(node, 'a missing or invalid resource schema');
 	if (payload.schema.type !== 'object') {
 		throw schemaError(node, 'a resource schema that is not an object');
 	}
 	const schemaProperties = payload.schema.properties;
 	if (!isRecord(schemaProperties)) throw schemaError(node, 'invalid schema properties');
-	const required = parseRequired(node, payload.schema.required);
-	const properties = parseProperties(node, schemaProperties, required);
+	const resourceRequired = parseRequired(node, payload.schema.required);
+	parseProperties(node, schemaProperties, resourceRequired);
+	parseMetadata(node, schemaProperties);
+
+	const writableSchema = postSchemas[0] ?? {
+		writableProperties: [],
+		writableMetadata: [],
+	};
+	if (postSchemas.some((schema) => !writableSchemasMatch(writableSchema, schema))) {
+		throw schemaError(node, 'conflicting POST endpoint argument schemas');
+	}
 
 	return {
-		canCreate: methods.includes('POST') && endpointMethods.includes('POST'),
+		canCreate: methods.includes('POST') && postSchemas.length > 0,
 		canRead: methods.includes('GET') && endpointMethods.includes('GET'),
-		properties,
-		metadata: parseMetadata(node, schemaProperties),
+		...writableSchema,
 	};
 }
 

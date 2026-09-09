@@ -110,6 +110,20 @@ describe('WordPress v2 content schema discovery', () => {
 		expect(result.writableMetadata).toEqual([]);
 	});
 
+	it.each([false, true])(
+		'accepts an empty metadata property map with container required set to %s',
+		(required) => {
+			const result = parseContentSchema(
+				node,
+				options({ meta: { type: 'object', required, properties: [] } }),
+				postType,
+			);
+
+			expect(result.writableProperties).toMatchObject([{ name: 'meta', required }]);
+			expect(result.writableMetadata).toEqual([]);
+		},
+	);
+
 	it('rejects a non-empty metadata property array', () => {
 		expect(() =>
 			parseContentSchema(
@@ -201,6 +215,14 @@ describe('WordPress v2 content schema discovery', () => {
 		['a malformed POST argument record', options({}, {}, { content: null })],
 		['a missing POST argument type', options({}, {}, { content: {} })],
 		['a missing metadata type', options({ meta: { type: 'object', properties: { field: {} } } })],
+		[
+			'a string metadata required value without properties',
+			options({ meta: { type: 'object', required: 'field' } }),
+		],
+		[
+			'an object metadata required value without properties',
+			options({ meta: { type: 'object', required: {} } }),
+		],
 		['a non-object metadata container', options({ meta: { type: 'string', properties: {} } })],
 		[
 			'an unsupported metadata type',

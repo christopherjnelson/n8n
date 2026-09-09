@@ -62,6 +62,35 @@ describe('WordPress v2 resource mapping', () => {
 		});
 	});
 
+	it.each([
+		['Posts', { type: 'object', required: false, properties: [] }, 0],
+		['Pages', { type: 'object', required: true, properties: [] }, 0],
+		[
+			'custom content',
+			{
+				type: 'object',
+				required: false,
+				properties: { external_id: { type: 'string', required: false } },
+			},
+			1,
+		],
+	])('loads %s fields from a realistic OPTIONS metadata schema', async (_name, meta, count) => {
+		const payload = {
+			namespace: 'site/v3',
+			methods: ['GET', 'POST'],
+			endpoints: [{ methods: ['POST'], args: { meta } }],
+			schema: { type: 'object', properties: { meta } },
+		};
+		getContentSchemaMock.mockResolvedValue(Schemas.parseContentSchema(node, payload, postType));
+
+		await expect(getContentFields.call(context('create'))).resolves.toEqual({ fields: [] });
+		const createMetadata = await getMetadataFields.call(context('create'));
+		expect(createMetadata.fields).toHaveLength(count);
+		await expect(getContentFields.call(context('update'))).resolves.toEqual({ fields: [] });
+		const metadata = await getMetadataFields.call(context('update'));
+		expect(metadata.fields).toHaveLength(count);
+	});
+
 	it('returns empty fields while the post type selection is blank', async () => {
 		const loadContext = context('create');
 		loadContext.getCurrentNodeParameter.mockReturnValue('');

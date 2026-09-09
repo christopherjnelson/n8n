@@ -12,34 +12,28 @@ import type { WordpressContentSchema } from '../../helpers/schemas';
 import { wordpressApiRequest } from '../../transport';
 
 export function getWriteFieldsDescription(operation: WordpressWriteMode): INodeProperties[] {
-	const mapper = (
-		name: 'fieldsToSend' | 'metadata',
-		displayName: string,
-		method: string,
-	): INodeProperties => ({
-		displayName,
-		name,
-		type: 'resourceMapper',
-		default: { mappingMode: 'defineBelow', value: null },
-		noDataExpression: true,
-		required: name === 'fieldsToSend',
-		typeOptions: {
-			loadOptionsDependsOn: ['postType.value', 'operation'],
-			resourceMapper: {
-				resourceMapperMethod: method,
-				mode: 'add',
-				fieldWords: { singular: 'field', plural: 'fields' },
-				addAllFields: false,
-				supportAutoMap: false,
-				allowEmptyValues: true,
-			},
-		},
-		displayOptions: { show: { resource: ['post'], operation: [operation] } },
-	});
-
 	return [
-		mapper('fieldsToSend', 'Fields to send', 'getContentFields'),
-		mapper('metadata', 'Metadata', 'getMetadataFields'),
+		{
+			displayName: operation === 'create' ? 'Fields to send' : 'Fields to update',
+			name: 'fieldsToSend',
+			type: 'resourceMapper',
+			default: { mappingMode: 'defineBelow', value: null },
+			noDataExpression: true,
+			required: true,
+			typeOptions: {
+				loadOptionsDependsOn: ['postType.value', 'operation'],
+				resourceMapper: {
+					resourceMapperMethod: 'getContentFields',
+					mode: 'add',
+					valuesLabel: operation === 'create' ? 'Fields to send' : 'Fields to update',
+					fieldWords: { singular: 'field', plural: 'fields' },
+					addAllFields: true,
+					supportAutoMap: false,
+					allowEmptyValues: true,
+				},
+			},
+			displayOptions: { show: { resource: ['post'], operation: [operation] } },
+		},
 	];
 }
 
@@ -49,14 +43,14 @@ function isDataObject(value: unknown): value is IDataObject {
 
 function getMapperValue(
 	context: IExecuteFunctions,
-	parameter: 'fieldsToSend' | 'metadata',
 	itemIndex: number,
 ): Readonly<Record<string, unknown>> {
+	const parameter = 'fieldsToSend';
 	const mapper: unknown = context.getNodeParameter(parameter, itemIndex, {});
 	if (!isDataObject(mapper)) {
 		throw new NodeOperationError(
 			context.getNode(),
-			`The ${parameter === 'metadata' ? 'metadata' : 'field'} mapping is invalid. Refresh the fields and try again.`,
+			'The field mapping is invalid. Refresh the fields and try again.',
 			{ itemIndex },
 		);
 	}
@@ -65,21 +59,21 @@ function getMapperValue(
 	if (!isDataObject(rawValue)) {
 		throw new NodeOperationError(
 			context.getNode(),
-			`The ${parameter === 'metadata' ? 'metadata' : 'field'} values must be an object. Check the supplied values and try again.`,
+			'The field values must be an object. Check the supplied values and try again.',
 			{ itemIndex },
 		);
 	}
 	if (mapper.mappingMode !== 'defineBelow') {
 		throw new NodeOperationError(
 			context.getNode(),
-			`The ${parameter === 'metadata' ? 'metadata' : 'field'} mapping mode isn't supported. Select fields manually and try again.`,
+			"The field mapping mode isn't supported. Select fields manually and try again.",
 			{ itemIndex },
 		);
 	}
 	if (!Array.isArray(mapper.schema)) {
 		throw new NodeOperationError(
 			context.getNode(),
-			`The ${parameter === 'metadata' ? 'metadata' : 'field'} mapping schema is invalid. Refresh the fields and try again.`,
+			'The field mapping schema is invalid. Refresh the fields and try again.',
 			{ itemIndex },
 		);
 	}
@@ -94,7 +88,7 @@ function getMapperValue(
 		) {
 			throw new NodeOperationError(
 				context.getNode(),
-				`The ${parameter === 'metadata' ? 'metadata' : 'field'} mapping schema is invalid. Refresh the fields and try again.`,
+				'The field mapping schema is invalid. Refresh the fields and try again.',
 				{ itemIndex },
 			);
 		}
@@ -104,7 +98,7 @@ function getMapperValue(
 	if (!isDataObject(value)) {
 		throw new NodeOperationError(
 			context.getNode(),
-			`The ${parameter === 'metadata' ? 'metadata' : 'field'} values must be an object. Check the supplied values and try again.`,
+			'The field values must be an object. Check the supplied values and try again.',
 			{ itemIndex },
 		);
 	}
@@ -113,7 +107,7 @@ function getMapperValue(
 		if (!isSafeObjectProperty(name)) {
 			throw new NodeOperationError(
 				context.getNode(),
-				`The ${parameter === 'metadata' ? 'metadata' : 'field'} mapping contains an unsafe field name. Refresh the fields and try again.`,
+				'The field mapping contains an unsafe field name. Refresh the fields and try again.',
 				{ itemIndex },
 			);
 		}
@@ -121,13 +115,47 @@ function getMapperValue(
 		if (active === undefined) {
 			throw new NodeOperationError(
 				context.getNode(),
-				`The ${parameter === 'metadata' ? 'metadata' : 'field'} mapping contains an unknown field. Refresh the fields and try again.`,
+				'The field mapping contains an unknown field. Refresh the fields and try again.',
 				{ itemIndex },
 			);
 		}
 		if (active) setSafeObjectProperty(selected, name, fieldValue);
 	}
 	return selected;
+}
+
+function splitMapperValues(
+	context: IExecuteFunctions,
+	schema: WordpressContentSchema,
+	values: Readonly<Record<string, unknown>>,
+	itemIndex: number,
+): { fields: Record<string, unknown>; metadata: Record<string, unknown> } {
+	const destinations = new Map<string, { name: string; metadata: boolean }>();
+	for (const property of schema.writableProperties) {
+		if (property.name !== 'meta' && !property.readOnly) {
+			destinations.set(`content:${property.name}`, { name: property.name, metadata: false });
+		}
+	}
+	for (const property of schema.writableMetadata) {
+		if (!property.readOnly) {
+			destinations.set(`metadata:${property.name}`, { name: property.name, metadata: true });
+		}
+	}
+
+	const fields: Record<string, unknown> = {};
+	const metadata: Record<string, unknown> = {};
+	for (const [id, value] of Object.entries(values)) {
+		const destination = destinations.get(id);
+		if (!destination) {
+			throw new NodeOperationError(
+				context.getNode(),
+				'The field mapping contains an unknown or stale field. Refresh the fields and try again.',
+				{ itemIndex },
+			);
+		}
+		setSafeObjectProperty(destination.metadata ? metadata : fields, destination.name, value);
+	}
+	return { fields, metadata };
 }
 
 function getItemId(context: IExecuteFunctions, itemIndex: number): number {
@@ -152,8 +180,8 @@ export async function executeWrite(
 	const returnData: INodeExecutionData[] = [];
 	for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 		try {
-			const fields = getMapperValue(context, 'fieldsToSend', itemIndex);
-			const metadata = getMapperValue(context, 'metadata', itemIndex);
+			const values = getMapperValue(context, itemIndex);
+			const { fields, metadata } = splitMapperValues(context, schema, values, itemIndex);
 			const body = buildWordpressRequestBody(context.getNode(), schema, mode, {
 				fields,
 				...(Object.keys(metadata).length > 0 ? { metadata } : {}),

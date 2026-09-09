@@ -14,16 +14,23 @@ function mapType(type: WordpressContentProperty['type']): FieldType {
 	return type;
 }
 
-function toMapperField(property: WordpressContentProperty, required: boolean): ResourceMapperField {
+function toMapperField(
+	property: WordpressContentProperty,
+	id: string,
+	displayName: string,
+	required: boolean,
+	removed: boolean,
+): ResourceMapperField {
 	return {
-		id: property.name,
-		displayName: property.name,
+		id,
+		displayName,
 		required,
 		defaultMatch: false,
 		canBeUsedToMatch: false,
 		display: true,
-		removed: true,
+		removed,
 		type: mapType(property.type),
+		defaultValue: null,
 	};
 }
 
@@ -51,35 +58,31 @@ function isCreateOperation(context: ILoadOptionsFunctions): boolean {
 export async function getContentFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
 	const schema = await getSchema.call(this);
 	if (schema === undefined) return { fields: [] };
-	const fields = schema.writableProperties
+	const contentFields = schema.writableProperties
 		.filter((property) => property.name !== 'meta' && !property.readOnly)
-		.map((property) => toMapperField(property, isCreateOperation(this) && property.required));
-	return { fields };
-}
-
-export async function getMetadataFields(
-	this: ILoadOptionsFunctions,
-): Promise<ResourceMapperFields> {
-	const schema = await getSchema.call(this);
-	if (schema === undefined) return { fields: [] };
-	const metaRequired = schema.writableProperties.find(
-		(property) => property.name === 'meta',
-	)?.required;
-	const fields = schema.writableMetadata
-		.filter((property) => !property.readOnly)
 		.map((property) =>
 			toMapperField(
 				property,
-				isCreateOperation(this) && metaRequired === true && property.required,
+				`content:${property.name}`,
+				property.name,
+				isCreateOperation(this) && property.required,
+				false,
 			),
 		);
-	return {
-		fields,
-		...(fields.length === 0
-			? {
-					emptyFieldsNotice:
-						'No registered metadata is available for this post type. Register REST metadata in WordPress, then refresh the fields.',
-				}
-			: {}),
-	};
+	const metaRequired = schema.writableProperties.find(
+		(property) => property.name === 'meta',
+	)?.required;
+	const metadataFields = schema.writableMetadata
+		.filter((property) => !property.readOnly)
+		.map((property) => {
+			const required = isCreateOperation(this) && metaRequired === true && property.required;
+			return toMapperField(
+				property,
+				`metadata:${property.name}`,
+				`Metadata: ${property.name}`,
+				required,
+				!required,
+			);
+		});
+	return { fields: [...contentFields, ...metadataFields] };
 }

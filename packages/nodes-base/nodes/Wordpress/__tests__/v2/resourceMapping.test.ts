@@ -5,7 +5,7 @@ import * as PostTypes from '../../v2/helpers/postTypes';
 import type * as PostTypesType from '../../v2/helpers/postTypes';
 import * as Schemas from '../../v2/helpers/schemas';
 import type * as SchemasType from '../../v2/helpers/schemas';
-import { getContentFields, getMetadataFields } from '../../v2/methods/resourceMapping';
+import { getContentFields } from '../../v2/methods/resourceMapping';
 
 vi.mock('../../v2/helpers/postTypes', async () => ({
 	...(await vi.importActual<typeof PostTypesType>('../../v2/helpers/postTypes')),
@@ -51,15 +51,39 @@ describe('WordPress v2 resource mapping', () => {
 				{ name: 'meta', type: 'object', nullable: false, readOnly: false, required: false },
 			],
 			writableMetadata: [
-				{ name: 'flag', type: 'boolean', nullable: false, readOnly: false, required: true },
+				{ name: 'flag', type: 'boolean', nullable: false, readOnly: false, required: false },
 				{ name: 'label', type: 'string', nullable: false, readOnly: false, required: false },
-				{ name: 'count', type: 'integer', nullable: false, readOnly: false, required: false },
+				{ name: 'count', type: 'integer', nullable: false, readOnly: false, required: true },
 				{ name: 'ratio', type: 'number', nullable: true, readOnly: false, required: false },
 				{ name: 'items', type: 'array', nullable: false, readOnly: false, required: false },
 				{ name: 'config', type: 'object', nullable: false, readOnly: false, required: false },
 				{ name: 'internal', type: 'string', nullable: false, readOnly: true, required: false },
 			],
 		});
+	});
+
+	it('returns empty fields without discovery while the post type is blank', async () => {
+		const loadContext = context('create');
+		loadContext.getCurrentNodeParameter.mockReturnValue('');
+
+		await expect(getContentFields.call(loadContext)).resolves.toEqual({ fields: [] });
+		expect(resolvePostTypeMock).not.toHaveBeenCalled();
+		expect(getContentSchemaMock).not.toHaveBeenCalled();
+	});
+
+	it('resolves the post type and schema once for one mapper load', async () => {
+		const loadContext = context('create');
+
+		await getContentFields.call(loadContext);
+
+		expect(loadContext.getCurrentNodeParameter.mock.calls).toContainEqual([
+			'postType',
+			{ extractValue: true },
+		]);
+		expect(resolvePostTypeMock).toHaveBeenCalledTimes(1);
+		expect(resolvePostTypeMock).toHaveBeenCalledWith('custom');
+		expect(getContentSchemaMock).toHaveBeenCalledTimes(1);
+		expect(getContentSchemaMock).toHaveBeenCalledWith(postType);
 	});
 
 	it.each([
@@ -83,69 +107,82 @@ describe('WordPress v2 resource mapping', () => {
 		};
 		getContentSchemaMock.mockResolvedValue(Schemas.parseContentSchema(node, payload, postType));
 
-		await expect(getContentFields.call(context('create'))).resolves.toEqual({ fields: [] });
-		const createMetadata = await getMetadataFields.call(context('create'));
-		expect(createMetadata.fields).toHaveLength(count);
-		await expect(getContentFields.call(context('update'))).resolves.toEqual({ fields: [] });
-		const metadata = await getMetadataFields.call(context('update'));
-		expect(metadata.fields).toHaveLength(count);
+		const create = await getContentFields.call(context('create'));
+		const update = await getContentFields.call(context('update'));
+
+		expect(create.fields).toHaveLength(count);
+		expect(update.fields).toHaveLength(count);
 	});
 
-	it('returns empty fields while the post type selection is blank', async () => {
-		const loadContext = context('create');
-		loadContext.getCurrentNodeParameter.mockReturnValue('');
-
-		await expect(getContentFields.call(loadContext)).resolves.toEqual({ fields: [] });
-		await expect(getMetadataFields.call(loadContext)).resolves.toEqual({ fields: [] });
-		expect(resolvePostTypeMock).not.toHaveBeenCalled();
-		expect(getContentSchemaMock).not.toHaveBeenCalled();
-	});
-
-	it('reads the current post type selection and loads its fields', async () => {
-		const loadContext = context('create');
-
-		await getContentFields.call(loadContext);
-
-		expect(loadContext.getCurrentNodeParameter.mock.calls).toContainEqual([
-			'postType',
-			{ extractValue: true },
-		]);
-		expect(resolvePostTypeMock).toHaveBeenCalledWith('custom');
-		expect(getContentSchemaMock).toHaveBeenCalledWith(postType);
-	});
-
-	it('maps writable POST arguments without a hardcoded title or meta container', async () => {
+	it('shows content fields first and hides clearly labeled metadata fields', async () => {
 		const result = await getContentFields.call(context('create'));
 
-		expect(
-			result.fields.map(({ id, type, required, display }) => ({ id, type, required, display })),
-		).toEqual([
-			{ id: 'name', type: 'string', required: true, display: true },
-			{ id: 'count', type: 'number', required: false, display: true },
-			{ id: 'ratio', type: 'number', required: false, display: true },
-			{ id: 'enabled', type: 'boolean', required: false, display: true },
-			{ id: 'list', type: 'array', required: false, display: true },
-			{ id: 'config', type: 'object', required: false, display: true },
+		expect(result.fields).toEqual([
+			expect.objectContaining({
+				id: 'content:name',
+				displayName: 'name',
+				type: 'string',
+				required: true,
+				removed: false,
+				defaultValue: null,
+			}),
+			expect.objectContaining({
+				id: 'content:count',
+				displayName: 'count',
+				type: 'number',
+				required: false,
+				removed: false,
+				defaultValue: null,
+			}),
+			expect.objectContaining({
+				id: 'content:ratio',
+				displayName: 'ratio',
+				type: 'number',
+				required: false,
+				removed: false,
+				defaultValue: null,
+			}),
+			expect.objectContaining({
+				id: 'content:enabled',
+				displayName: 'enabled',
+				type: 'boolean',
+				removed: false,
+			}),
+			expect.objectContaining({ id: 'content:list', type: 'array', removed: false }),
+			expect.objectContaining({ id: 'content:config', type: 'object', removed: false }),
+			expect.objectContaining({
+				id: 'metadata:flag',
+				displayName: 'Metadata: flag',
+				type: 'boolean',
+				removed: true,
+			}),
+			expect.objectContaining({
+				id: 'metadata:label',
+				displayName: 'Metadata: label',
+				type: 'string',
+				removed: true,
+			}),
+			expect.objectContaining({
+				id: 'metadata:count',
+				displayName: 'Metadata: count',
+				type: 'number',
+				required: false,
+				removed: true,
+				defaultValue: null,
+			}),
+			expect.objectContaining({ id: 'metadata:ratio', type: 'number', removed: true }),
+			expect.objectContaining({ id: 'metadata:items', type: 'array', removed: true }),
+			expect.objectContaining({ id: 'metadata:config', type: 'object', removed: true }),
 		]);
-		expect(result.fields.some((field) => field.id === 'title')).toBe(false);
 	});
 
-	it('keeps children optional when the metadata container is optional', async () => {
-		const create = await getMetadataFields.call(context('create'));
-		const update = await getMetadataFields.call(context('update'));
+	it('keeps every field optional for update', async () => {
+		const result = await getContentFields.call(context('update'));
 
-		expect(create.fields.map(({ id, type, required }) => ({ id, type, required }))).toEqual([
-			{ id: 'flag', type: 'boolean', required: false },
-			{ id: 'label', type: 'string', required: false },
-			{ id: 'count', type: 'number', required: false },
-			{ id: 'ratio', type: 'number', required: false },
-			{ id: 'items', type: 'array', required: false },
-			{ id: 'config', type: 'object', required: false },
-		]);
-		expect(update.fields.every((field) => !field.required)).toBe(true);
+		expect(result.fields.every((field) => !field.required)).toBe(true);
 	});
 
-	it('requires a child on create only when the metadata container is required', async () => {
+	it('requires metadata children on create only when the metadata container is required', async () => {
 		getContentSchemaMock.mockResolvedValue({
 			canCreate: true,
 			canRead: true,
@@ -157,25 +194,18 @@ describe('WordPress v2 resource mapping', () => {
 			],
 		});
 
-		const create = await getMetadataFields.call(context('create'));
-		const update = await getMetadataFields.call(context('update'));
+		const create = await getContentFields.call(context('create'));
+		const update = await getContentFields.call(context('update'));
 
-		expect(create.fields[0]).toMatchObject({ id: 'flag', required: true });
-		expect(update.fields[0]).toMatchObject({ id: 'flag', required: false });
-	});
-
-	it('returns a clear notice when the post type has no registered metadata', async () => {
-		getContentSchemaMock.mockResolvedValue({
-			canCreate: true,
-			canRead: true,
-			writableProperties: [],
-			writableMetadata: [],
+		expect(create.fields[0]).toMatchObject({
+			id: 'metadata:flag',
+			required: true,
+			removed: false,
 		});
-
-		await expect(getMetadataFields.call(context('create'))).resolves.toEqual({
-			fields: [],
-			emptyFieldsNotice:
-				'No registered metadata is available for this post type. Register REST metadata in WordPress, then refresh the fields.',
+		expect(update.fields[0]).toMatchObject({
+			id: 'metadata:flag',
+			required: false,
+			removed: true,
 		});
 	});
 });

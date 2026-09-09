@@ -55,6 +55,7 @@ const writableSchema = {
 		{ name: 'items', type: 'array', nullable: false, readOnly: false, required: false },
 		{ name: 'config', type: 'object', nullable: false, readOnly: false, required: false },
 		{ name: 'summary', type: 'string', nullable: false, readOnly: false, required: false },
+		{ name: 'enabled', type: 'boolean', nullable: false, readOnly: false, required: false },
 		{ name: 'meta', type: 'object', nullable: false, readOnly: false, required: false },
 	],
 	writableMetadata: [
@@ -66,19 +67,37 @@ const writableSchema = {
 
 type Parameters = Record<string, unknown>;
 
+function mapperId(kind: 'content' | 'metadata', name: string): string {
+	return `${kind}:${name}`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function mapperValue(
 	value: Record<string, unknown> | null,
+	metadata: Record<string, unknown> = {},
 	removed: string[] = [],
 ): Record<string, unknown> {
+	const mappedValue =
+		value === null
+			? null
+			: {
+					...Object.fromEntries(
+						Object.entries(value).map(([name, fieldValue]) => [`content:${name}`, fieldValue]),
+					),
+					...Object.fromEntries(
+						Object.entries(metadata).map(([name, fieldValue]) => [`metadata:${name}`, fieldValue]),
+					),
+				};
 	return {
 		mappingMode: 'defineBelow',
-		value,
+		value: mappedValue,
 		schema:
-			value === null ? [] : Object.keys(value).map((id) => ({ id, removed: removed.includes(id) })),
+			mappedValue === null
+				? []
+				: Object.keys(mappedValue).map((id) => ({ id, removed: removed.includes(id) })),
 	};
 }
 
@@ -217,24 +236,30 @@ describe('WordPress v2 node', () => {
 		expect(JSON.stringify(postType)).toContain('Enter a registered post type slug');
 		const returnAll = description.properties.find((property) => property.name === 'returnAll');
 		expect(returnAll?.displayName).toBe('Return All');
-		expect(description.properties.some((property) => property.name === 'metadata')).toBe(true);
-		const createFields = description.properties.find(
-			(property) =>
-				property.name === 'fieldsToSend' &&
-				property.displayOptions?.show?.operation?.includes('create'),
+		expect(description.properties.some((property) => property.name === 'metadata')).toBe(false);
+		const writeFields = description.properties.filter(
+			(property) => property.name === 'fieldsToSend',
 		);
-		const createMetadata = description.properties.find(
-			(property) =>
-				property.name === 'metadata' &&
-				property.displayOptions?.show?.operation?.includes('create'),
+		expect(writeFields).toHaveLength(2);
+		const createFields = writeFields.find((property) =>
+			property.displayOptions?.show?.operation?.includes('create'),
+		);
+		const updateFields = writeFields.find((property) =>
+			property.displayOptions?.show?.operation?.includes('update'),
 		);
 		expect(createFields).toMatchObject({
 			required: true,
-			typeOptions: { resourceMapper: { supportAutoMap: false, allowEmptyValues: true } },
+			typeOptions: {
+				resourceMapper: {
+					supportAutoMap: false,
+					allowEmptyValues: true,
+					valuesLabel: 'Fields to send',
+				},
+			},
 		});
-		expect(createMetadata).toMatchObject({
-			required: false,
-			typeOptions: { resourceMapper: { supportAutoMap: false, allowEmptyValues: true } },
+		expect(updateFields).toMatchObject({
+			required: true,
+			typeOptions: { resourceMapper: { valuesLabel: 'Fields to update' } },
 		});
 	});
 
@@ -255,13 +280,12 @@ describe('WordPress v2 node', () => {
 						config: {},
 						summary: '',
 					},
-					['featured'],
+					{ enabled: false, settings: {}, unused: null },
+					['content:featured', 'metadata:unused'],
 				),
-				metadata: mapperValue({ enabled: false, settings: {}, unused: null }, ['unused']),
 			},
 			{
 				fieldsToSend: mapperValue({ title: 'Second' }),
-				metadata: mapperValue(null),
 			},
 		]);
 
@@ -303,7 +327,6 @@ describe('WordPress v2 node', () => {
 				operation: 'create',
 				postType: 'bs_workflow',
 				fieldsToSend: mapperValue({ title: 'Nullable', score: null }),
-				metadata: mapperValue(null),
 			},
 		]);
 
@@ -317,8 +340,7 @@ describe('WordPress v2 node', () => {
 		const parameterNames = context.getNodeParameter.mock.calls.map(([name]) => name);
 		expect(parameterNames).toContain('fieldsToSend');
 		expect(parameterNames).toContain('fieldsToSend.value');
-		expect(parameterNames).toContain('metadata');
-		expect(parameterNames).not.toContain('metadata.value');
+		expect(parameterNames).not.toContain('metadata');
 	});
 
 	it('rejects malformed mapper values with the item index', async () => {
@@ -328,7 +350,6 @@ describe('WordPress v2 node', () => {
 				operation: 'create',
 				postType: 'post',
 				fieldsToSend: { mappingMode: 'defineBelow', value: 'invalid', schema: [] },
-				metadata: mapperValue(null),
 			},
 		]);
 
@@ -341,10 +362,10 @@ describe('WordPress v2 node', () => {
 			name: 'duplicate schema entries',
 			mapper: {
 				mappingMode: 'defineBelow',
-				value: { title: 'Test' },
+				value: { [mapperId('content', 'title')]: 'Test' },
 				schema: [
-					{ id: 'title', removed: false },
-					{ id: 'title', removed: true },
+					{ id: 'content:title', removed: false },
+					{ id: 'content:title', removed: true },
 				],
 			},
 		},
@@ -358,14 +379,26 @@ describe('WordPress v2 node', () => {
 		},
 		{
 			name: 'an unknown active value',
-			mapper: { mappingMode: 'defineBelow', value: { title: 'Test' }, schema: [] },
+			mapper: {
+				mappingMode: 'defineBelow',
+				value: { [mapperId('content', 'title')]: 'Test' },
+				schema: [],
+			},
 		},
 		{
 			name: 'automatic mapping',
 			mapper: {
 				mappingMode: 'autoMapInputData',
-				value: { title: 'Test' },
-				schema: [{ id: 'title', removed: false }],
+				value: { [mapperId('content', 'title')]: 'Test' },
+				schema: [{ id: 'content:title', removed: false }],
+			},
+		},
+		{
+			name: 'a stale active value',
+			mapper: {
+				mappingMode: 'defineBelow',
+				value: { [mapperId('content', 'retired')]: 'Test' },
+				schema: [{ id: 'content:retired', removed: false }],
 			},
 		},
 		{
@@ -383,7 +416,6 @@ describe('WordPress v2 node', () => {
 				operation: 'create',
 				postType: 'post',
 				fieldsToSend: mapper,
-				metadata: mapperValue(null),
 			},
 		]);
 
@@ -401,7 +433,6 @@ describe('WordPress v2 node', () => {
 					postType: 'post',
 					itemId: 5,
 					fieldsToSend: mapperValue({}),
-					metadata: mapperValue(null),
 				},
 			],
 			true,
@@ -432,8 +463,7 @@ describe('WordPress v2 node', () => {
 				operation: 'update',
 				postType: 'bs_workflow',
 				itemId: 21,
-				fieldsToSend: mapperValue({ sticky: false }),
-				metadata: mapperValue({ enabled: false }),
+				fieldsToSend: mapperValue({ sticky: false }, { enabled: false }),
 			},
 		]);
 
@@ -443,6 +473,55 @@ describe('WordPress v2 node', () => {
 			'POST',
 			{ namespace: 'publisher/v3', base: 'library/items', suffix: [21] },
 			{ sticky: false, meta: { enabled: false } },
+		);
+	});
+
+	it('omits visible untouched fields, including booleans', async () => {
+		requestMock.mockResolvedValue({ id: 22 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'update',
+				postType: 'bs_workflow',
+				itemId: 22,
+				fieldsToSend: {
+					mappingMode: 'defineBelow',
+					value: {},
+					schema: [
+						{ id: 'content:title', removed: false },
+						{ id: 'content:sticky', removed: false },
+					],
+				},
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items', suffix: [22] },
+			{},
+		);
+	});
+
+	it('keeps colliding content and metadata names in separate locations', async () => {
+		requestMock.mockResolvedValue({ id: 22 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'update',
+				postType: 'bs_workflow',
+				itemId: 22,
+				fieldsToSend: mapperValue({ enabled: false }, { enabled: true }),
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items', suffix: [22] },
+			{ enabled: false, meta: { enabled: true } },
 		);
 	});
 
@@ -456,9 +535,8 @@ describe('WordPress v2 node', () => {
 					postType: 'post',
 					itemId: 0,
 					fieldsToSend: mapperValue({}),
-					metadata: mapperValue({}),
 				},
-				{ itemId: 22, fieldsToSend: mapperValue({}), metadata: mapperValue({}) },
+				{ itemId: 22, fieldsToSend: mapperValue({}) },
 			],
 			true,
 		);

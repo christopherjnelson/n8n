@@ -9,6 +9,13 @@ import { NodeOperationError } from 'n8n-workflow';
 import { resolvePostType } from '../helpers/postTypes';
 import { getContentSchema, type WordpressContentProperty } from '../helpers/schemas';
 
+const initiallyVisibleContentFields: ReadonlySet<string> = new Set([
+	'title',
+	'content',
+	'excerpt',
+	'status',
+]);
+
 function mapType(type: WordpressContentProperty['type']): FieldType {
 	if (type === 'integer') return 'number';
 	return type;
@@ -77,12 +84,13 @@ export async function getContentFields(this: ILoadOptionsFunctions): Promise<Res
 		.filter((property) => property.name !== 'meta' && !property.readOnly)
 		.map((property) => {
 			const required = isCreate && property.required;
+			const initiallyVisible = required || initiallyVisibleContentFields.has(property.name);
 			return toMapperField(
 				property,
 				`content:${property.name}`,
 				property.name,
 				required,
-				!required,
+				!initiallyVisible,
 			);
 		});
 	return { fields: contentFields };

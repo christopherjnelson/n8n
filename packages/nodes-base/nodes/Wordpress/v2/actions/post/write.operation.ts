@@ -45,7 +45,7 @@ export function getWriteFieldsDescription(operation: WordpressWriteMode): INodeP
 					mode: 'add',
 					valuesLabel: operation === 'create' ? 'Fields to send' : 'Fields to update',
 					fieldWords: { singular: 'field', plural: 'fields' },
-					addAllFields: false,
+					addAllFields: true,
 					supportAutoMap: false,
 					allowEmptyValues: true,
 				},

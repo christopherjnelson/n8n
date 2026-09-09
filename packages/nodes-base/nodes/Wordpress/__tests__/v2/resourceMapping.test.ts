@@ -169,6 +169,86 @@ describe('WordPress v2 resource mapping', () => {
 		expect(result.fields.every((field) => field.display)).toBe(true);
 	});
 
+	it.each(['create', 'update'] as const)(
+		'shows supported common fields for %s without inventing fields or defaults',
+		async (operation) => {
+			getContentSchemaMock.mockResolvedValue({
+				canCreate: true,
+				canRead: true,
+				writableProperties: [
+					{ name: 'title', type: 'string', nullable: false, readOnly: false, required: false },
+					{ name: 'content', type: 'string', nullable: false, readOnly: false, required: false },
+					{ name: 'excerpt', type: 'string', nullable: false, readOnly: false, required: false },
+					{
+						name: 'status',
+						type: 'string',
+						enum: ['draft', 'publish'],
+						nullable: false,
+						readOnly: false,
+						required: false,
+					},
+					{
+						name: 'external_id',
+						type: 'string',
+						nullable: false,
+						readOnly: false,
+						required: true,
+					},
+					{
+						name: 'custom_score',
+						type: 'number',
+						nullable: false,
+						readOnly: false,
+						required: false,
+					},
+				],
+				writableMetadata: [],
+			});
+
+			const { fields } = await getContentFields.call(context(operation));
+
+			expect(fields.map((field) => field.id)).toEqual([
+				'content:title',
+				'content:content',
+				'content:excerpt',
+				'content:status',
+				'content:external_id',
+				'content:custom_score',
+			]);
+			expect(fields.find((field) => field.id === 'content:title')).toMatchObject({
+				type: 'string',
+				removed: false,
+				required: false,
+			});
+			expect(fields.find((field) => field.id === 'content:status')).toMatchObject({
+				type: 'options',
+				removed: false,
+				required: false,
+			});
+			expect(fields.find((field) => field.id === 'content:content')).toMatchObject({
+				type: 'string',
+				removed: false,
+				required: false,
+			});
+			expect(fields.find((field) => field.id === 'content:excerpt')).toMatchObject({
+				type: 'string',
+				removed: false,
+				required: false,
+			});
+			expect(fields.find((field) => field.id === 'content:external_id')).toMatchObject({
+				display: true,
+				removed: operation === 'update',
+				required: operation === 'create',
+			});
+			expect(fields.find((field) => field.id === 'content:custom_score')).toMatchObject({
+				display: true,
+				removed: true,
+				required: false,
+			});
+			expect(fields.every((field) => field.defaultValue === undefined)).toBe(true);
+		},
+	);
+
 	it('uses short labels and reliable controls', async () => {
 		getContentSchemaMock.mockResolvedValue({
 			canCreate: true,

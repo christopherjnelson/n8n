@@ -42,6 +42,7 @@ export type WordpressMetadataProperty = WordpressContentProperty;
 export type WordpressContentSchema = {
 	canCreate: boolean;
 	canRead: boolean;
+	canUpdate: boolean;
 	writableProperties: WordpressContentProperty[];
 	writableMetadata: WordpressMetadataProperty[];
 };
@@ -344,6 +345,7 @@ export function parseContentSchema(
 	node: INode,
 	payload: unknown,
 	postType: WordpressPostType,
+	mode: 'create' | 'update' = 'create',
 ): WordpressContentSchema {
 	if (!isRecord(payload)) throw schemaError(node, 'an invalid OPTIONS response');
 	if (payload.namespace !== postType.restNamespace) {
@@ -380,8 +382,9 @@ export function parseContentSchema(
 	}
 
 	return {
-		canCreate: methods.includes('POST') && postSchemas.length > 0,
+		canCreate: mode === 'create' && methods.includes('POST') && postSchemas.length > 0,
 		canRead: methods.includes('GET') && endpointMethods.includes('GET'),
+		canUpdate: mode === 'update' && methods.includes('POST') && postSchemas.length > 0,
 		...writableSchema,
 	};
 }
@@ -389,11 +392,15 @@ export function parseContentSchema(
 export async function getContentSchema(
 	this: WordpressFunctions,
 	postType: WordpressPostType,
+	mode: 'create' | 'update' = 'create',
 ): Promise<WordpressContentSchema> {
 	// The request runtime supports OPTIONS, but the legacy shared method type omits it.
-	const response = await wordpressApiRequest.call(this, 'OPTIONS' as IHttpRequestMethods, {
-		namespace: postType.restNamespace,
-		base: postType.restBase,
-	});
-	return parseContentSchema(this.getNode(), response, postType);
+	const route = { namespace: postType.restNamespace, base: postType.restBase };
+	const response = await wordpressApiRequest.call(
+		this,
+		'OPTIONS' as IHttpRequestMethods,
+		// WordPress matches the item route without loading this placeholder item.
+		mode === 'update' ? { ...route, suffix: [1] } : route,
+	);
+	return parseContentSchema(this.getNode(), response, postType, mode);
 }

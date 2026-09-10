@@ -47,6 +47,7 @@ const discoveredType = {
 const writableSchema = {
 	canCreate: true,
 	canRead: true,
+	canUpdate: true,
 	writableProperties: [
 		{ name: 'title', type: 'string', nullable: false, readOnly: false, required: true },
 		{ name: 'sticky', type: 'boolean', nullable: false, readOnly: false, required: false },
@@ -277,6 +278,9 @@ describe('WordPress v2 node', () => {
 				},
 			},
 		});
+		for (const mapper of [createFields, updateFields, createMetadata, updateMetadata]) {
+			expect(mapper?.typeOptions?.loadOptionsDependsOn).toEqual(['postType.value', 'operation']);
+		}
 		expect(updateFields).toMatchObject({
 			required: true,
 			description:
@@ -392,6 +396,120 @@ describe('WordPress v2 node', () => {
 		);
 		expect(resolvePostTypeMock).not.toHaveBeenCalled();
 		expect(getContentSchemaMock).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['required field', { username: 42 }, /username value must be text/],
+		['optional field', { additionalFields: { nickname: false } }, /nickname value must be text/],
+		[
+			'query option',
+			{ operation: 'getAll', returnAll: false, limit: 1, options: { search: 7 } },
+			/search option must be text/,
+		],
+	] as const)(
+		'rejects a non-string User %s before the request',
+		async (_label, override, message) => {
+			const context = createContext([
+				{
+					resource: 'user',
+					operation: 'create',
+					username: 'ada',
+					name: 'Ada',
+					firstName: 'Ada',
+					lastName: 'Lovelace',
+					email: 'ada@example.com',
+					password: 'secret',
+					additionalFields: {},
+					...override,
+				},
+			]);
+
+			await expect(executeV2(context)).rejects.toThrow(message);
+			expect(requestMock).not.toHaveBeenCalled();
+		},
+	);
+
+	it('omits optional empty User strings', async () => {
+		requestMock.mockResolvedValue({ id: 7 });
+		const context = createContext([
+			{
+				resource: 'user',
+				operation: 'create',
+				username: 'ada',
+				name: '',
+				firstName: '',
+				lastName: '',
+				email: 'ada@example.com',
+				password: 'secret',
+				additionalFields: { nickname: '', url: '' },
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenCalledWith(
+			'POST',
+			{ namespace: 'wp/v2', base: 'users' },
+			expect.not.objectContaining({ nickname: expect.anything(), url: expect.anything() }),
+		);
+	});
+
+	it('uses the selected item route to discover Update fields', async () => {
+		requestMock.mockResolvedValue({ id: 14 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'update',
+				postType: 'bs_workflow',
+				itemId: 14,
+				updateFieldsToSend: mapperValue({ title: 'Updated' }),
+			},
+		]);
+
+		await executeV2(context);
+
+		expect(getContentSchemaMock).toHaveBeenCalledWith(discoveredType, 'update');
+	});
+
+	it('assigns and clears a schema-discovered custom taxonomy field', async () => {
+		getContentSchemaMock.mockResolvedValue({
+			...writableSchema,
+			writableProperties: [
+				{
+					name: 'workflow_topics',
+					type: 'array',
+					itemType: 'integer',
+					nullable: false,
+					readOnly: false,
+					required: false,
+				},
+			],
+		});
+		requestMock.mockResolvedValueOnce({ id: 31 }).mockResolvedValueOnce({ id: 32 });
+		const context = createContext([
+			{
+				resource: 'post',
+				operation: 'create',
+				postType: 'bs_workflow',
+				createFieldsToSend: mapperValue({ workflow_topics: [4, 9] }),
+			},
+			{ createFieldsToSend: mapperValue({ workflow_topics: [] }) },
+		]);
+
+		await executeV2(context);
+
+		expect(requestMock).toHaveBeenNthCalledWith(
+			1,
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items' },
+			{ workflow_topics: [4, 9] },
+		);
+		expect(requestMock).toHaveBeenNthCalledWith(
+			2,
+			'POST',
+			{ namespace: 'publisher/v3', base: 'library/items' },
+			{ workflow_topics: [] },
+		);
 	});
 
 	it('gets and updates Users by ID', async () => {
@@ -961,7 +1079,7 @@ describe('WordPress v2 node', () => {
 		});
 		const context = createContext([{ resource: 'post', operation: 'create', postType: 'post' }]);
 
-		await expect(executeV2(context)).rejects.toThrow("doesn't have a writable REST schema");
+		await expect(executeV2(context)).rejects.toThrow("doesn't support create");
 		expect(requestMock).not.toHaveBeenCalled();
 	});
 
@@ -1058,6 +1176,34 @@ describe('WordPress v2 node', () => {
 		expect(requestMock).toHaveBeenCalledTimes(1);
 		expect(result[0]?.[0]?.json.error).toContain('positive whole number');
 		expect(result[0]?.[1]).toEqual({ json: { id: 22 }, pairedItem: { item: 1 } });
+	});
+
+	it('returns paired errors when every Update item ID is invalid', async () => {
+		const context = createContext(
+			[
+				{
+					resource: 'post',
+					operation: 'update',
+					postType: 'post',
+					itemId: 0,
+					updateFieldsToSend: mapperValue({}),
+				},
+				{ itemId: -1, updateFieldsToSend: mapperValue({}) },
+			],
+			true,
+		);
+
+		const result = await executeV2(context);
+
+		expect(getContentSchemaMock).toHaveBeenCalledOnce();
+		expect(requestMock).not.toHaveBeenCalled();
+		expect(result[0]).toEqual([
+			expect.objectContaining({ pairedItem: { item: 0 } }),
+			expect.objectContaining({ pairedItem: { item: 1 } }),
+		]);
+		expect(
+			result[0]?.every((item) => String(item.json.error).includes('positive whole number')),
+		).toBe(true);
 	});
 
 	it('lists friendly post type names and stores registered slugs', async () => {
@@ -1292,6 +1438,25 @@ describe('WordPress v2 node', () => {
 
 		await expect(executeV2(context)).rejects.toThrow('Discovery failed');
 		expect(resolvePostTypeMock).toHaveBeenCalledTimes(1);
+		expect(requestMock).not.toHaveBeenCalled();
+	});
+
+	it('propagates a write schema permission failure before item requests', async () => {
+		getContentSchemaMock.mockRejectedValue(new NodeOperationError(node, 'Permission denied'));
+		const context = createContext(
+			[
+				{
+					resource: 'post',
+					operation: 'update',
+					postType: 'post',
+					itemId: 12,
+					updateFieldsToSend: mapperValue({}),
+				},
+			],
+			true,
+		);
+
+		await expect(executeV2(context)).rejects.toThrow('Permission denied');
 		expect(requestMock).not.toHaveBeenCalled();
 	});
 });

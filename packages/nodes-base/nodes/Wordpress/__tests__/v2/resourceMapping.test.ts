@@ -28,9 +28,10 @@ type TestLoadContext = ILoadOptionsFunctions & {
 function context(operation: 'create' | 'update'): TestLoadContext {
 	return {
 		getNode: vi.fn().mockReturnValue(node),
-		getCurrentNodeParameter: vi
-			.fn()
-			.mockImplementation((name: string) => (name === 'postType' ? 'custom' : operation)),
+		getCurrentNodeParameter: vi.fn().mockImplementation((name: string) => {
+			if (name === 'postType') return 'custom';
+			return operation;
+		}),
 	} as unknown as TestLoadContext;
 }
 
@@ -40,6 +41,7 @@ describe('WordPress v2 resource mapping', () => {
 		getContentSchemaMock.mockReset().mockResolvedValue({
 			canCreate: true,
 			canRead: true,
+			canUpdate: true,
 			writableProperties: [
 				{ name: 'name', type: 'string', nullable: false, readOnly: false, required: true },
 				{ name: 'count', type: 'integer', nullable: false, readOnly: false, required: false },
@@ -71,6 +73,20 @@ describe('WordPress v2 resource mapping', () => {
 		expect(getContentSchemaMock).not.toHaveBeenCalled();
 	});
 
+	it('loads Update fields without a concrete item ID', async () => {
+		const loadContext = context('update');
+		loadContext.getCurrentNodeParameter.mockImplementation((name: string) => {
+			if (name === 'postType') return 'custom';
+			if (name === 'itemId') return '={{ $json.id }}';
+			return 'update';
+		});
+
+		await expect(getContentFields.call(loadContext)).resolves.toMatchObject({
+			fields: expect.arrayContaining([expect.objectContaining({ id: 'content:name' })]),
+		});
+		expect(getContentSchemaMock).toHaveBeenCalledWith(postType, 'update');
+	});
+
 	it('resolves the post type and schema once for one mapper load', async () => {
 		const loadContext = context('create');
 
@@ -83,7 +99,7 @@ describe('WordPress v2 resource mapping', () => {
 		expect(resolvePostTypeMock).toHaveBeenCalledTimes(1);
 		expect(resolvePostTypeMock).toHaveBeenCalledWith('custom');
 		expect(getContentSchemaMock).toHaveBeenCalledTimes(1);
-		expect(getContentSchemaMock).toHaveBeenCalledWith(postType);
+		expect(getContentSchemaMock).toHaveBeenCalledWith(postType, 'create');
 	});
 
 	it.each([
@@ -105,7 +121,9 @@ describe('WordPress v2 resource mapping', () => {
 			endpoints: [{ methods: ['POST'], args: { meta } }],
 			schema: { type: 'object', properties: { meta } },
 		};
-		getContentSchemaMock.mockResolvedValue(Schemas.parseContentSchema(node, payload, postType));
+		getContentSchemaMock.mockImplementation(async (_postType, operation) =>
+			Schemas.parseContentSchema(node, payload, postType, operation),
+		);
 
 		const create = await getMetadataFields.call(context('create'));
 		const update = await getMetadataFields.call(context('update'));
@@ -175,6 +193,7 @@ describe('WordPress v2 resource mapping', () => {
 			getContentSchemaMock.mockResolvedValue({
 				canCreate: true,
 				canRead: true,
+				canUpdate: true,
 				writableProperties: [
 					{ name: 'title', type: 'string', nullable: false, readOnly: false, required: false },
 					{ name: 'content', type: 'string', nullable: false, readOnly: false, required: false },
@@ -253,6 +272,7 @@ describe('WordPress v2 resource mapping', () => {
 		getContentSchemaMock.mockResolvedValue({
 			canCreate: true,
 			canRead: true,
+			canUpdate: true,
 			writableProperties: [
 				{
 					name: 'title',
@@ -331,6 +351,7 @@ describe('WordPress v2 resource mapping', () => {
 		getContentSchemaMock.mockResolvedValue({
 			canCreate: true,
 			canRead: true,
+			canUpdate: true,
 			writableProperties: [
 				{ name: 'meta', type: 'object', nullable: false, readOnly: false, required: true },
 			],

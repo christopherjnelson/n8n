@@ -54,6 +54,7 @@ describe('WordPress v2 content schema discovery', () => {
 		).toEqual({
 			canCreate: true,
 			canRead: true,
+			canUpdate: false,
 			writableProperties: [
 				{
 					name: 'title',
@@ -92,6 +93,68 @@ describe('WordPress v2 content schema discovery', () => {
 			canCreate: false,
 			writableProperties: [],
 			writableMetadata: [],
+		});
+	});
+
+	it('uses collection POST arguments for Create and item POST arguments for Update', () => {
+		const create = parseContentSchema(
+			node,
+			options({}, {}, { title: { type: 'string', required: true } }),
+			postType,
+			'create',
+		);
+		const update = parseContentSchema(
+			node,
+			{
+				...options(),
+				methods: ['GET', 'POST', 'PUT', 'PATCH'],
+				endpoints: [
+					{ methods: ['GET'], args: {} },
+					{
+						methods: ['POST', 'PUT', 'PATCH'],
+						args: { title: { type: 'string' }, revision_note: { type: 'string' } },
+					},
+				],
+			},
+			postType,
+			'update',
+		);
+
+		expect(create).toMatchObject({
+			canCreate: true,
+			canUpdate: false,
+			writableProperties: [{ name: 'title', required: true }],
+		});
+		expect(update).toMatchObject({ canCreate: false, canUpdate: true });
+		expect(update.writableProperties.map(({ name }) => name)).toEqual(['title', 'revision_note']);
+	});
+
+	it('reports create-only and update-only route capabilities', () => {
+		const create = parseContentSchema(node, options(), postType, 'create');
+		const update = parseContentSchema(
+			node,
+			{
+				...options(),
+				methods: ['POST'],
+				endpoints: [{ methods: ['POST', 'PUT', 'PATCH'], args: {} }],
+			},
+			postType,
+			'update',
+		);
+
+		expect(create).toMatchObject({ canCreate: true, canUpdate: false });
+		expect(update).toMatchObject({ canCreate: false, canUpdate: true });
+	});
+
+	it('requests the selected item route for Update schema discovery', async () => {
+		requestMock.mockResolvedValue(options());
+
+		await getContentSchema.call(context, postType, 'update');
+
+		expect(requestMock).toHaveBeenCalledWith('OPTIONS', {
+			namespace: 'publisher/v3',
+			base: 'library/items',
+			suffix: [1],
 		});
 	});
 

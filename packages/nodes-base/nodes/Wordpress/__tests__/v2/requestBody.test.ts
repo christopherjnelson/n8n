@@ -28,6 +28,7 @@ const schema = (
 ): WordpressContentSchema => ({
 	canCreate: true,
 	canRead: true,
+	canUpdate: true,
 	writableProperties: properties,
 	writableMetadata: metadata,
 });

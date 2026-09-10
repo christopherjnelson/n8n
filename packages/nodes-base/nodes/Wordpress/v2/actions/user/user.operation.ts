@@ -1,5 +1,5 @@
 import type { IDataObject, IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
-import { NodeOperationError } from 'n8n-workflow';
+import { NodeOperationError, setSafeObjectProperty } from 'n8n-workflow';
 
 import type { WordpressUserOperation } from '../node.type';
 import { wordpressApiRequest, wordpressApiRequestWithResponse } from '../../transport';
@@ -76,17 +76,62 @@ function getUserId(context: IExecuteFunctions, itemIndex: number): number {
 	return id;
 }
 
-function addUserFields(body: IDataObject, fields: IDataObject): void {
-	if (fields.name) body.name = fields.name as string;
-	if (fields.firstName) body.first_name = fields.firstName as string;
-	if (fields.lastName) body.last_name = fields.lastName as string;
-	if (fields.email) body.email = fields.email as string;
-	if (fields.password) body.password = fields.password as string;
-	if (fields.username) body.username = fields.username as string;
-	if (fields.url) body.url = fields.url as string;
-	if (fields.description) body.description = fields.description as string;
-	if (fields.nickname) body.nickname = fields.nickname as string;
-	if (fields.slug) body.slug = fields.slug as string;
+function getRequiredString(context: IExecuteFunctions, name: string, itemIndex: number): string {
+	const value: unknown = context.getNodeParameter(name, itemIndex);
+	if (typeof value !== 'string') {
+		throw new NodeOperationError(context.getNode(), `The ${name} value must be text.`, {
+			itemIndex,
+		});
+	}
+	return value;
+}
+
+function addUserFields(
+	context: IExecuteFunctions,
+	body: IDataObject,
+	fields: IDataObject,
+	itemIndex: number,
+): void {
+	const mappings = new Map([
+		['name', 'name'],
+		['firstName', 'first_name'],
+		['lastName', 'last_name'],
+		['email', 'email'],
+		['password', 'password'],
+		['username', 'username'],
+		['url', 'url'],
+		['description', 'description'],
+		['nickname', 'nickname'],
+		['slug', 'slug'],
+	]);
+	for (const [source, destination] of mappings) {
+		const value = fields[source];
+		if (value === undefined || value === '') continue;
+		if (typeof value !== 'string') {
+			throw new NodeOperationError(context.getNode(), `The ${source} value must be text.`, {
+				itemIndex,
+			});
+		}
+		setSafeObjectProperty(body, destination, value);
+	}
+}
+
+function addOptionalQueryString(
+	context: IExecuteFunctions,
+	query: IDataObject,
+	options: IDataObject,
+	source: string,
+	destination: string,
+	itemIndex: number,
+): void {
+	const value = options[source];
+	if (value === undefined || value === '') return;
+	if (typeof value !== 'string') {
+		throw new NodeOperationError(context.getNode(), `The ${source} option must be text.`, {
+			itemIndex,
+		});
+	}
+	setSafeObjectProperty(query, destination, value);
 }
 
 function parseTotalPages(context: IExecuteFunctions, headers: unknown, itemIndex: number): number {
@@ -198,14 +243,14 @@ async function executeItem(
 ): Promise<IDataObject[]> {
 	if (operation === 'create') {
 		const body: IDataObject = {
-			username: context.getNodeParameter('username', itemIndex) as string,
-			name: context.getNodeParameter('name', itemIndex) as string,
-			first_name: context.getNodeParameter('firstName', itemIndex) as string,
-			last_name: context.getNodeParameter('lastName', itemIndex) as string,
-			email: context.getNodeParameter('email', itemIndex) as string,
-			password: context.getNodeParameter('password', itemIndex) as string,
+			username: getRequiredString(context, 'username', itemIndex),
+			name: getRequiredString(context, 'name', itemIndex),
+			first_name: getRequiredString(context, 'firstName', itemIndex),
+			last_name: getRequiredString(context, 'lastName', itemIndex),
+			email: getRequiredString(context, 'email', itemIndex),
+			password: getRequiredString(context, 'password', itemIndex),
 		};
-		addUserFields(body, getCollection(context, 'additionalFields', itemIndex));
+		addUserFields(context, body, getCollection(context, 'additionalFields', itemIndex), itemIndex);
 		const response = await wordpressApiRequest.call(
 			context,
 			'POST',
@@ -218,7 +263,7 @@ async function executeItem(
 	if (operation === 'update') {
 		const userId = getUserId(context, itemIndex);
 		const body: IDataObject = { id: userId };
-		addUserFields(body, getCollection(context, 'updateFields', itemIndex));
+		addUserFields(context, body, getCollection(context, 'updateFields', itemIndex), itemIndex);
 		const response = await wordpressApiRequest.call(
 			context,
 			'POST',
@@ -231,7 +276,7 @@ async function executeItem(
 		const userId = getUserId(context, itemIndex);
 		const options = getOptions(context, itemIndex);
 		const query: IDataObject = {};
-		if (options.context) query.context = options.context;
+		addOptionalQueryString(context, query, options, 'context', 'context', itemIndex);
 		const response = await wordpressApiRequest.call(
 			context,
 			'GET',
@@ -244,11 +289,11 @@ async function executeItem(
 
 	const options = getOptions(context, itemIndex);
 	const query: IDataObject = {};
-	if (options.context) query.context = options.context;
-	if (options.orderBy) query.orderby = options.orderBy;
-	if (options.order) query.order = options.order;
-	if (options.search) query.search = options.search;
-	if (options.who) query.who = options.who;
+	addOptionalQueryString(context, query, options, 'context', 'context', itemIndex);
+	addOptionalQueryString(context, query, options, 'orderBy', 'orderby', itemIndex);
+	addOptionalQueryString(context, query, options, 'order', 'order', itemIndex);
+	addOptionalQueryString(context, query, options, 'search', 'search', itemIndex);
+	addOptionalQueryString(context, query, options, 'who', 'who', itemIndex);
 	return await getAllUsers(context, itemIndex, query);
 }
 

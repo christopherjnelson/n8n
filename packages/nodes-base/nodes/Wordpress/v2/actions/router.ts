@@ -52,11 +52,14 @@ export async function router(this: IExecuteFunctions): Promise<INodeExecutionDat
 	const postType = await resolvePostType.call(this, registeredSlug);
 	const selectedOperation: WordpressOperation = operation;
 	if (selectedOperation === 'create' || selectedOperation === 'update') {
-		const schema = await getContentSchema.call(this, postType);
-		if (!schema.canCreate) {
+		const schema = await getContentSchema.call(this, postType, selectedOperation);
+		if (
+			(selectedOperation === 'create' && !schema.canCreate) ||
+			(selectedOperation === 'update' && !schema.canUpdate)
+		) {
 			throw new NodeOperationError(
 				this.getNode(),
-				"The selected post type doesn't have a writable REST schema. Check the WordPress permissions and post type REST settings, then try again.",
+				`The selected post type doesn't support ${selectedOperation}. Check the WordPress permissions and post type REST settings, then try again.`,
 			);
 		}
 		return [

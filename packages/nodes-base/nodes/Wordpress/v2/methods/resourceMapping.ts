@@ -62,11 +62,16 @@ async function getSchema(this: ILoadOptionsFunctions) {
 		throw new NodeOperationError(this.getNode(), 'Select a valid post type and try again.');
 	}
 	const postType = await resolvePostType.call(this, slug);
-	const schema = await getContentSchema.call(this, postType);
-	if (!schema.canCreate) {
+	const operation = this.getCurrentNodeParameter('operation');
+	if (operation !== 'create' && operation !== 'update') return undefined;
+	const schema = await getContentSchema.call(this, postType, operation);
+	if (
+		(operation === 'create' && !schema.canCreate) ||
+		(operation === 'update' && !schema.canUpdate)
+	) {
 		throw new NodeOperationError(
 			this.getNode(),
-			"The selected post type doesn't have a writable REST schema. Check the WordPress permissions and post type REST settings, then try again.",
+			`The selected post type doesn't support ${operation}. Check the WordPress permissions and post type REST settings, then try again.`,
 		);
 	}
 	return schema;

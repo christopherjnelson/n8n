@@ -11,5 +11,3 @@ export type {
 	WordpressMetadataProperty,
 	WordpressSchemaValueType,
 } from './schemas';
-export { getTaxonomies, parseTaxonomyCollection } from './taxonomies';
-export type { WordpressTaxonomy } from './taxonomies';
